@@ -50,3 +50,6 @@ x86/
 Thumbs.db
 Desktop.ini
 *.DS_Store
+
+## MCCanAttackJni.dll (project file, tracked)
+!/MCCanAttackJni.dll
