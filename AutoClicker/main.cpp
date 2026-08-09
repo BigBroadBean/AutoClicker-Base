@@ -676,7 +676,7 @@ static void Paint()
         RECT vr = { tr.left, tr.top + 26, tr.right, tr.bottom };
         SetTextColor(dc, TXT_DIM());
         SelectObject(dc, g_hfSmall);
-        DrawTextW(dc, L"v2.3", -1, &vr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        DrawTextW(dc, L"v2.4", -1, &vr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     }
 
     // ---- pin / theme buttons (with hover hints) ----
@@ -862,7 +862,7 @@ static void Paint()
             wchar_t buf[32];
             swprintf(buf, 32, L"%.1f \x6b21/\x79d2", c10 / 10.0f);
             RECT r = { L.card[i].left + 20, L.card[i].top + 60,
-                       L.track[SL_L].right, L.card[i].top + 86 };
+                       L.track[SL_L + i].right, L.card[i].top + 86 };
             SetTextColor(dc, TXT());
             DrawTextW(dc, buf, -1, &r, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
             swprintf(buf, 32, L"%d \x6beb\x79d2", ms);
@@ -1290,7 +1290,7 @@ static void Paint()
             if (g_hr[E_BTN_CANATK_KEY].hover) {
                 static const wchar_t* tip[] = {
                     L"\x8bbe\x7f6e\x5f00\x5173\x5feb\x6377\x952e",
-                    L"\x6309\x4e0b\x4efb\x610f\x952e\x7ed1\x5b9a \xb7 Esc \x53d6\x6d88"
+                    L"\x6309\x4e0b\x4efb\x610f\x952e\x7ed1\x5b9a \xb7 Esc \x6e05\x9664"
                 };
                 DrawTip(L.btnCanAtkKey, tip, 2);
             }
@@ -1471,7 +1471,7 @@ static void Click(HWND hwnd, Elem e)
     case E_BTN_KEY:
         if (g_rebinding != E_NONE) break;
         g_rebinding = E_BTN_KEY;
-        ShowToast(L"\x8bbe\x7f6e\x5feb\x6377\x952e", L"\x6309\x4e0b\x4efb\x610f\x952e \xb7 Esc \x53d6\x6d88", ACCENT());
+        ShowToast(L"\x8bbe\x7f6e\x5feb\x6377\x952e", L"\x6309\x4e0b\x4efb\x610f\x952e \xb7 Esc \x6e05\x9664", ACCENT());
         Redraw(hwnd);
         {
             bool ok = CaptureKey(vk_key);
@@ -1483,7 +1483,7 @@ static void Click(HWND hwnd, Elem e)
     case E_BTN_MKEY:
         if (g_rebinding != E_NONE) break;
         g_rebinding = E_BTN_MKEY;
-        ShowToast(L"\x8bbe\x7f6e\x5feb\x6377\x952e", L"\x6309\x4e0b\x4efb\x610f\x952e \xb7 Esc \x53d6\x6d88", ACCENT());
+        ShowToast(L"\x8bbe\x7f6e\x5feb\x6377\x952e", L"\x6309\x4e0b\x4efb\x610f\x952e \xb7 Esc \x6e05\x9664", ACCENT());
         Redraw(hwnd);
         {
             bool ok = CaptureKey(vk_multi_key);
@@ -1495,7 +1495,7 @@ static void Click(HWND hwnd, Elem e)
     case E_BTN_SCROLL_KEY:
         if (g_rebinding != E_NONE) break;
         g_rebinding = E_BTN_SCROLL_KEY;
-        ShowToast(L"\x8bbe\x7f6e\x5feb\x6377\x952e", L"\x6309\x4e0b\x4efb\x610f\x952e \xb7 Esc \x53d6\x6d88", ACCENT());
+        ShowToast(L"\x8bbe\x7f6e\x5feb\x6377\x952e", L"\x6309\x4e0b\x4efb\x610f\x952e \xb7 Esc \x6e05\x9664", ACCENT());
         Redraw(hwnd);
         {
             bool ok = CaptureKey(vk_scroll_key);
@@ -1507,7 +1507,7 @@ static void Click(HWND hwnd, Elem e)
     case E_BTN_SCROLL_LR_KEY:
         if (g_rebinding != E_NONE) break;
         g_rebinding = E_BTN_SCROLL_LR_KEY;
-        ShowToast(L"\x8bbe\x7f6e\x5feb\x6377\x952e", L"\x6309\x4e0b\x4efb\x610f\x952e \xb7 Esc \x53d6\x6d88", ACCENT());
+        ShowToast(L"\x8bbe\x7f6e\x5feb\x6377\x952e", L"\x6309\x4e0b\x4efb\x610f\x952e \xb7 Esc \x6e05\x9664", ACCENT());
         Redraw(hwnd);
         {
             bool ok = CaptureKey(vk_scroll_lr_key);
@@ -1519,7 +1519,7 @@ static void Click(HWND hwnd, Elem e)
     case E_BTN_CANATK_KEY:
         if (g_rebinding != E_NONE) break;
         g_rebinding = E_BTN_CANATK_KEY;
-        ShowToast(L"\x8bbe\x7f6e\x5feb\x6377\x952e", L"\x6309\x4e0b\x4efb\x610f\x952e \xb7 Esc \x53d6\x6d88", ACCENT());
+        ShowToast(L"\x8bbe\x7f6e\x5feb\x6377\x952e", L"\x6309\x4e0b\x4efb\x610f\x952e \xb7 Esc \x6e05\x9664", ACCENT());
         Redraw(hwnd);
         {
             bool ok = CaptureKey(vk_canattack_key);

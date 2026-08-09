@@ -23,7 +23,7 @@ A lightweight Windows auto-clicker with a **sidebar navigation + Neumorphism UI*
 - **CPS limit** to prevent clicking too fast (type a value directly)
 - **Auto-stop timer**: stops the clicker after N seconds
 - **Realtime CPS readout**: bottom-right chip shows the live click rate (1s sliding window)
-- **Custom hotkeys**: press any key to bind (Esc cancels), with guide toast
+- **Custom hotkeys**: press any key to bind (Esc clears to “none”), with guide toast
 - **Keep-click mode**: auto-click without holding the hotkey
 - **Always-on-top** pin button
 - **Neumorphism UI**: soft extruded/inset surfaces, dark & light themes, theme-aware toasts
@@ -57,7 +57,7 @@ Building requires `MCCanAttackJni.dll` in the repository root (a PreBuildEvent c
 - **Multi page**: multiplier/delay sliders + presets + multi hotkey
 - **Scroll page**: scroll-click toggle + left/right selector + two hotkeys
 - **Advanced page**: CPS limit, random CPS, auto-stop timer
-- **Hotkeys**: click a hotkey button, then press any key to bind (Esc cancels)
+- **Hotkeys**: click a hotkey button, then press any key to bind (Esc clears to “none”)
 - **Attack-only gate**: toggle on the Click page (row 3); when on, only the LEFT button pauses unless the targeted entity is attackable (right button is unaffected). Status bar has a 4th indicator (green=attackable, red=not, dim=no game data) and the Click page shows a live 可攻击/不可攻击/未连接 chip; bindable hotkey. Fail-safe: no UDP data (game closed / DLL missing) is treated as “cannot attack”
 - **Auto-injection**: after the attack-only gate is enabled, a background loop (1s period) scans javaw/java processes and injects MCCanAttackJni.dll into every Minecraft Java client not yet injected (identified by GLFW30/LWJGL window class, x64 only, no double injection, re-injects after game restarts); **nothing is injected while the feature is off**. Note: NetEase China Edition (game box) has anti-cheat protection - injection is detected and the game gets terminated, so the feature does not work there
 - **Single-file distribution**: MCCanAttackJni.dll is embedded into the exe and auto-extracted to `%TEMP%\AutoClicker\` at startup; a sidecar DLL next to the exe takes priority when present (for DLL updates)

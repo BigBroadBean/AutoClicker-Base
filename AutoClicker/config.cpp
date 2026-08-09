@@ -37,7 +37,7 @@ void LoadConfig()
         randomCpsEnabled = (v != 0);
     if (std::getline(file, line) && sscanf_s(line.c_str(), "%d", &v) == 1 && v >= 1 && v <= 5)
         randomCpsRange = v;
-    if (std::getline(file, line) && sscanf_s(line.c_str(), "%d", &v) == 1 && v >= 1 && v <= 255)
+    if (std::getline(file, line) && sscanf_s(line.c_str(), "%d", &v) == 1 && v >= 0 && v <= 255)
         vk_key = v;
     if (std::getline(file, line) && sscanf_s(line.c_str(), "%d", &v) == 1)
         leftenabled = (v != 0);
@@ -45,17 +45,17 @@ void LoadConfig()
         rightenabled = (v != 0);
     if (std::getline(file, line) && sscanf_s(line.c_str(), "%d", &v) == 1)
         keepClicke = (v != 0);
-    if (std::getline(file, line) && sscanf_s(line.c_str(), "%d", &v) == 1 && v >= 1 && v <= 255)
+    if (std::getline(file, line) && sscanf_s(line.c_str(), "%d", &v) == 1 && v >= 0 && v <= 255)
         vk_multi_key = v;
     if (std::getline(file, line) && sscanf_s(line.c_str(), "%d", &v) == 1 && v >= 1 && v <= 5)
         multiMul = v;
     if (std::getline(file, line) && sscanf_s(line.c_str(), "%d", &v) == 1 && v >= 1 && v <= 200)
         multiDelayMs = v;
-    if (std::getline(file, line) && sscanf_s(line.c_str(), "%d", &v) == 1 && v >= 1 && v <= 255)
+    if (std::getline(file, line) && sscanf_s(line.c_str(), "%d", &v) == 1 && v >= 0 && v <= 255)
         vk_scroll_key = v;
     if (std::getline(file, line) && sscanf_s(line.c_str(), "%d", &v) == 1)
         scrollClickButton = (v != 0) ? 1 : 0;
-    if (std::getline(file, line) && sscanf_s(line.c_str(), "%d", &v) == 1 && v >= 1 && v <= 255)
+    if (std::getline(file, line) && sscanf_s(line.c_str(), "%d", &v) == 1 && v >= 0 && v <= 255)
         vk_scroll_lr_key = v;
     if (std::getline(file, line) && sscanf_s(line.c_str(), "%d", &v) == 1)
         g_theme = (v != 0) ? Theme::Light : Theme::Dark;
