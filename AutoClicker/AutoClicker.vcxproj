@@ -144,6 +144,7 @@
     <ClInclude Include="clicker.h" />
     <ClInclude Include="config.h" />
     <ClInclude Include="overlay.h" />
+    <ClInclude Include="report.h" />
     <ClInclude Include="resource.h" />
     <ClInclude Include="sound.h" />
     <ClInclude Include="types.h" />
@@ -155,6 +156,7 @@
     <ClCompile Include="config.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="overlay.cpp" />
+    <ClCompile Include="report.cpp" />
     <ClCompile Include="sound.cpp" />
     <ClCompile Include="ui.cpp" />
   </ItemGroup>

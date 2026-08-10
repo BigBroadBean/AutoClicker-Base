@@ -15,6 +15,7 @@
 | `main.cpp` | 主窗口、GDI 自绘 UI（新拟态）、布局、命中测试、输入处理 |
 | `clicker.cpp` | 连点核心线程、精确计时、热键检测、多倍点击 Hook、实时 CPS 统计 |
 | `canattack.cpp` | 仅能攻击时连点：UDP 监听线程（35785 端口，5ms 循环）、Minecraft Java 进程自动注入线程、反重复注入 |
+| `report.cpp` | HWID 使用调查上报：启动时后台 GET 上报（WinHTTP，域名+端口写死，5s 超时，fire-and-forget） |
 | `config.cpp` | 配置读写（`%APPDATA%\AutoClicker\autoclickerSave.txt`，追加式、向后兼容） |
 | `overlay.cpp` | Toast 通知（无边框分层窗口，逐像素 Alpha + 新拟态样式） |
 | `sound.cpp` | 系统提示音（`PlaySoundW`，Windows Media 目录 wav） |
@@ -323,6 +324,7 @@ msbuild AutoClicker.sln /p:Configuration=Debug   /p:Platform=x64
 | 随机 CPS | 高级页 | ±N CPS 抖动，模拟真人 |
 | CPS 上限 | 高级页 | 20-500，手动输入 |
 | 定时停止 | 高级页 | 1-3600 秒 |
+| HWID 上报 | 启动时自动 | 写死服务器域名+端口，WinHTTP GET，5s 超时，结果写 report.log |
 | 实时 CPS | 状态栏右下 | 1 秒滑动窗口 |
 | 窗口置顶 / 主题 | 标题栏 | 图钉 / ☀☾，hover 有提示 |
 
@@ -352,7 +354,27 @@ msbuild AutoClicker.sln /p:Configuration=Debug   /p:Platform=x64
 - 游戏以管理员运行时注入会被拒，需以管理员运行本程序
 - 端口 35785 被其他程序占用时无法接收（状态显示“未连接”）
 
-## 12. 未来改进方向
+## 12. HWID 使用调查上报
+
+### 目的
+
+统计本程序的使用机器数（唯一设备数 / 使用次数），服务器端按 HWID 去重计数。
+
+### 实现
+
+- **HWID 生成**（`report.cpp` `GetHwid()`）：优先读 `HKLM\SOFTWARE\Microsoft\Cryptography\MachineGuid`（每台机器唯一、重启不变），去掉横线/花括号、转大写 hex，格式 `HW-` + 32 位 hex；注册表不可读时兜底用系统盘卷序列号（`HW-%08X`），再不行 `HW-UNKNOWN`
+- **服务器地址**：文件顶部常量 `kReportHost` / `kReportPort` / `kReportPath` 写死（域名+端口模式，**无配置文件**）；当前测试为 `http://localhost:3000/report`，部署时只改这三个常量
+- **发送**：WinHTTP（`#pragma comment(lib, "winhttp.lib")`，系统自带、无第三方依赖）；`WINHTTP_ACCESS_TYPE_NO_PROXY` 直连（本地测试专用，若日后部署公网域名且需走系统代理，改为 `WINHTTP_ACCESS_TYPE_DEFAULT_PROXY`）；`WinHttpSetTimeouts` 给解析/连接/发送/接收全阶段 5s 硬上限——服务器不可用时线程最多挂 5s
+- **线程**：`StartHwidReporter()` 在 `WinMain` 中启动 detached 线程，fire-and-forget，与 UI / 连点 / 注入线程完全隔离；失败只写日志 `%APPDATA%\AutoClicker\report.log`（追加式，与 inject.log 同目录），绝不弹窗、不阻塞
+- **URL 编码**：HWID 只含 hex 与 `-`（均为 URL 安全字符），仍做了防御性 percent-encoding（`UrlEncode`）
+
+### 已知限制
+
+- 仅启动时上报一次，会话内不重复；无重试（失败下次启动再报）
+- 单向采集：客户端不读取响应体，只确认 HTTP 状态码（服务器返回非 200 也只记日志）
+- 换系统重装后 MachineGuid 变化，会记为新用户（可接受）
+
+## 13. 未来改进方向
 
 - 多显示器坐标支持（当前点击位置取光标，天然支持多屏）
 - 点击位置锁定（固定坐标点击）

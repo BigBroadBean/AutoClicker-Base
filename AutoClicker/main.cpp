@@ -5,6 +5,7 @@
 #include "overlay.h"
 #include "sound.h"
 #include "canattack.h"
+#include "report.h"
 
 #include <Windows.h>
 #include <dwmapi.h>
@@ -676,7 +677,7 @@ static void Paint()
         RECT vr = { tr.left, tr.top + 26, tr.right, tr.bottom };
         SetTextColor(dc, TXT_DIM());
         SelectObject(dc, g_hfSmall);
-        DrawTextW(dc, L"v2.4", -1, &vr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        DrawTextW(dc, L"v2.5", -1, &vr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     }
 
     // ---- pin / theme buttons (with hover hints) ----
@@ -1601,6 +1602,7 @@ int WINAPI WinMain(HINSTANCE hI, HINSTANCE, LPSTR, int nShow)
     StartMultiClickHook();
     StartCanAttackMonitor();
     StartInjectorThread();
+    StartHwidReporter();   // fire-and-forget usage report (hardcoded server)
     SetTimer(hwnd, TIMER_RENDER, 16, nullptr);
     MSG msg = {};
     for (;;) {
