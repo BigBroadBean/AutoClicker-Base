@@ -41,13 +41,18 @@ A lightweight Windows auto-clicker with a **sidebar navigation + Neumorphism UI*
 ## Build
 
 1. Open `AutoClicker.sln` in Visual Studio
-2. Select `Release | x64` configuration
+2. Pick a configuration:
+   - **`Release | x64`** — Network edition: HWID usage reporting + startup
+     version check (`AUTOCLICKER_NET` defined)
+   - **`Release-Base | x64`** — Base edition: no networking modules compiled
+     in (no reporting, no update check)
 3. Build → Build Solution (Ctrl+Shift+B)
 
 Or build from command line:
 
 ```powershell
-msbuild AutoClicker.sln /p:Configuration=Release /p:Platform=x64
+msbuild AutoClicker.sln /p:Configuration=Release /p:Platform=x64          # Net
+msbuild AutoClicker.sln /p:Configuration=Release-Base /p:Platform=x64      # Base
 ```
 
 Building requires `MCCanAttackJni.dll` in the repository root (a PreBuildEvent copies it into the project dir and it is embedded into the exe as an RCDATA resource).

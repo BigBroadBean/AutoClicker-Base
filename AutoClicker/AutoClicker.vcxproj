@@ -17,6 +17,10 @@
       <Configuration>Release</Configuration>
       <Platform>x64</Platform>
     </ProjectConfiguration>
+    <ProjectConfiguration Include="Release-Base|x64">
+      <Configuration>Release-Base</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>17.0</VCProjectVersion>
@@ -52,6 +56,14 @@
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <CharacterSet>MultiByte</CharacterSet>
   </PropertyGroup>
+  <!-- Release-Base: 无网络版（不定义 AUTOCLICKER_NET，不编译 report/update/httputil） -->
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release-Base|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>MultiByte</CharacterSet>
+  </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <ImportGroup Label="ExtensionSettings">
   </ImportGroup>
@@ -69,12 +81,15 @@
   <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release-Base|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;AUTOCLICKER_NET;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
@@ -90,7 +105,7 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;AUTOCLICKER_NET;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
@@ -106,7 +121,7 @@
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_DEBUG;_CONSOLE;AUTOCLICKER_NET;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
@@ -118,6 +133,29 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>NDEBUG;_CONSOLE;AUTOCLICKER_NET;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+    </Link>
+    <PreBuildEvent>
+      <Command>xcopy /y /d "$(SolutionDir)MCCanAttackJni.dll" "$(ProjectDir)" 2&gt;nul &amp; exit 0</Command>
+    </PreBuildEvent>
+  </ItemDefinitionGroup>
+  <!-- Release-Base: 无网络版（不定义 AUTOCLICKER_NET，不编译 report/update/httputil） -->
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release-Base|x64'">
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <FunctionLevelLinking>true</FunctionLevelLinking>
@@ -143,27 +181,27 @@
     <ClInclude Include="canattack.h" />
     <ClInclude Include="clicker.h" />
     <ClInclude Include="config.h" />
-    <ClInclude Include="httputil.h" />
+    <ClInclude Include="httputil.h" Condition="'$(Configuration)'!='Release-Base'" />
     <ClInclude Include="overlay.h" />
-    <ClInclude Include="report.h" />
+    <ClInclude Include="report.h" Condition="'$(Configuration)'!='Release-Base'" />
     <ClInclude Include="resource.h" />
-    <ClInclude Include="servercfg.h" />
+    <ClInclude Include="servercfg.h" Condition="'$(Configuration)'!='Release-Base'" />
     <ClInclude Include="sound.h" />
     <ClInclude Include="types.h" />
     <ClInclude Include="ui.h" />
-    <ClInclude Include="update.h" />
+    <ClInclude Include="update.h" Condition="'$(Configuration)'!='Release-Base'" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="canattack.cpp" />
     <ClCompile Include="clicker.cpp" />
     <ClCompile Include="config.cpp" />
-    <ClCompile Include="httputil.cpp" />
+    <ClCompile Include="httputil.cpp" Condition="'$(Configuration)'!='Release-Base'" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="overlay.cpp" />
-    <ClCompile Include="report.cpp" />
+    <ClCompile Include="report.cpp" Condition="'$(Configuration)'!='Release-Base'" />
     <ClCompile Include="sound.cpp" />
     <ClCompile Include="ui.cpp" />
-    <ClCompile Include="update.cpp" />
+    <ClCompile Include="update.cpp" Condition="'$(Configuration)'!='Release-Base'" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="AutoClicker.rc" />

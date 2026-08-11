@@ -43,13 +43,16 @@ eport.log`
 ## 构建
 
 1. 用 Visual Studio 打开 `AutoClicker.sln`
-2. 选择 `Release | x64` 配置
+2. 选择配置：
+   - **`Release | x64`** —— 网络版：HWID 使用上报 + 启动时版本检查（定义 `AUTOCLICKER_NET` 宏）
+   - **`Release-Base | x64`** —— 基础版：不编译任何网络模块（不上报、不检查更新）
 3. 生成 → 生成解决方案（Ctrl+Shift+B）
 
 或通过命令行构建：
 
 ```powershell
-msbuild AutoClicker.sln /p:Configuration=Release /p:Platform=x64
+msbuild AutoClicker.sln /p:Configuration=Release /p:Platform=x64          # Net 网络版
+msbuild AutoClicker.sln /p:Configuration=Release-Base /p:Platform=x64      # Base 基础版
 ```
 
 构建需要仓库根目录存在 `MCCanAttackJni.dll`（PreBuildEvent 会自动复制到项目目录并作为 RCDATA 资源嵌入 exe）。

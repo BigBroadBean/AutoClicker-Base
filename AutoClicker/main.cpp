@@ -5,8 +5,10 @@
 #include "overlay.h"
 #include "sound.h"
 #include "canattack.h"
+#ifdef AUTOCLICKER_NET
 #include "report.h"
 #include "update.h"
+#endif
 
 #include <Windows.h>
 #include <dwmapi.h>
@@ -1603,8 +1605,10 @@ int WINAPI WinMain(HINSTANCE hI, HINSTANCE, LPSTR, int nShow)
     StartMultiClickHook();
     StartCanAttackMonitor();
     StartInjectorThread();
+#ifdef AUTOCLICKER_NET
     StartHwidReporter();   // fire-and-forget usage report (hardcoded server)
     StartVersionCheck();   // background update check (MessageBox if outdated)
+#endif
     SetTimer(hwnd, TIMER_RENDER, 16, nullptr);
     MSG msg = {};
     for (;;) {

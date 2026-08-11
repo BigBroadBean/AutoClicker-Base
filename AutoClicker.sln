@@ -11,6 +11,7 @@ Global
 		Debug|x86 = Debug|x86
 		Release|x64 = Release|x64
 		Release|x86 = Release|x86
+		Release-Base|x64 = Release-Base|x64
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
 		{1AC0B4FD-A435-4F70-93A3-242F41A69059}.Debug|x64.ActiveCfg = Debug|x64
@@ -21,6 +22,8 @@ Global
 		{1AC0B4FD-A435-4F70-93A3-242F41A69059}.Release|x64.Build.0 = Release|x64
 		{1AC0B4FD-A435-4F70-93A3-242F41A69059}.Release|x86.ActiveCfg = Release|Win32
 		{1AC0B4FD-A435-4F70-93A3-242F41A69059}.Release|x86.Build.0 = Release|Win32
+		{1AC0B4FD-A435-4F70-93A3-242F41A69059}.Release-Base|x64.ActiveCfg = Release-Base|x64
+		{1AC0B4FD-A435-4F70-93A3-242F41A69059}.Release-Base|x64.Build.0 = Release-Base|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

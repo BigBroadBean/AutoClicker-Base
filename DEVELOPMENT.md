@@ -20,6 +20,19 @@
 | `update.cpp` | 启动时版本检查：GET /version/latest 对比本地版本，有新版弹 MessageBox（含更新内容） |
 | `servercfg.h` | 服务器域名+端口常量（写死，无配置文件），report/update 共用 |
 | `versionutil.h` | 版本工具（纯函数头文件）：点分数字版本比较 + JSON 字符串提取，update 模块与单元测试共用 |
+
+### 双版本构建（Base / Net）
+
+同一套代码通过编译宏 `AUTOCLICKER_NET` 产出两种形态：
+
+| 配置 | 宏 | 网络模块 | 用途 |
+|---|---|---|---|
+| `Release \| x64` | 定义 `AUTOCLICKER_NET` | report.cpp / update.cpp / httputil.cpp 参与编译 | 网络版：HWID 上报 + 版本检查 |
+| `Release-Base \| x64` | 不定义 | 上述文件被 vcxproj Condition 排除 | 基础版：无任何网络行为 |
+
+- `main.cpp` 中 `#include` 与 `StartHwidReporter()`/`StartVersionCheck()` 调用均以 `#ifdef AUTOCLICKER_NET` 包裹
+- 头文件 report.h / update.h / httputil.h / servercfg.h 同样按配置排除（不参与编译）
+- 基础版仍保留 MCCanAttackJni 注入（仅能攻击时连点）——它是本机 UDP 通信，不属于外部网络交互
 | `config.cpp` | 配置读写（`%APPDATA%\AutoClicker\autoclickerSave.txt`，追加式、向后兼容） |
 | `overlay.cpp` | Toast 通知（无边框分层窗口，逐像素 Alpha + 新拟态样式） |
 | `sound.cpp` | 系统提示音（`PlaySoundW`，Windows Media 目录 wav） |
@@ -306,8 +319,9 @@ Layout 中右侧卡片（右键/延迟）的预设按钮 x 坐标错误复用了
 
 ```powershell
 # 命令行构建
-msbuild AutoClicker.sln /p:Configuration=Release /p:Platform=x64
+msbuild AutoClicker.sln /p:Configuration=Release /p:Platform=x64          # Net 网络版
 msbuild AutoClicker.sln /p:Configuration=Debug   /p:Platform=x64
+msbuild AutoClicker.sln /p:Configuration=Release-Base /p:Platform=x64     # Base 基础版（无网络模块）
 ```
 
 - 工具链：VS2022+（项目当前用 v145 工具集，MSVC 14.51）
