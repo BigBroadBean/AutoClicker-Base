@@ -1,17 +1,17 @@
 // HWID usage reporting module.
 //
-// Server address is hardcoded in servercfg.h (domain + port), no config file.
-// To deploy, change servercfg.h, e.g.:
+// Server address is hardcoded in servercfg.h (domain + port), no config file:
+//     http://counter.bigbroadbean.top:3000/report?hwid=HW-...
+// To deploy elsewhere, change servercfg.h, e.g.:
 //     kServerHost = L"stats.example.com";  kServerPort = 8080;
-// Full URL: http://localhost:3000/report?hwid=HW-...
 //
 // Design notes:
 //  - WinHTTP (system component, no third-party dependency), shared helper in
 //    httputil.cpp with a 5s total timeout
-//  - WINHTTP_ACCESS_TYPE_NO_PROXY: the test server is on localhost, going
-//    through a system proxy would break it. When moving to a public domain
-//    behind a corporate proxy, switch to WINHTTP_ACCESS_TYPE_DEFAULT_PROXY
-//    in httputil.cpp.
+//  - WINHTTP_ACCESS_TYPE_NO_PROXY: avoids system-proxy interference for
+//    direct connections (tested against the public server; switch to
+//    WINHTTP_ACCESS_TYPE_DEFAULT_PROXY in httputil.cpp when a proxy is
+//    required).
 //  - Failures only append to report.log; the UI and clicker threads are
 //    never touched.
 

@@ -22,7 +22,7 @@
 - **仅能攻击时连点**（直接连点的附属功能）：自动向 Minecraft Java 进程注入 MCCanAttackJni.dll，通过 UDP 35785 端口实时接收“能否攻击准星目标”（0/1，5ms 刷新），开启后**仅左键**连点会在可攻击时进行，右键不受影响；未开启时照常连点。支持 **1.8.9 / 1.12.2 / 1.20.1（含对应 Forge 版本）**
 - **CPS 上限**：防止连点过快（可手动输入）
 - **定时自动停止**：连点 N 秒后自动关闭（可手动输入秒数）
-- **HWID 使用调查上报**：启动时向写死的服务器上报本机唯一硬件标识（基于 MachineGuid，格式 `HW-xxxx`），地址为 `report.cpp` 中的域名+端口常量（当前 `http://localhost:3000/report?hwid=...`，无配置文件）；后台线程发送、5 秒超时，服务器不可用不影响正常使用；结果记录在 `%APPDATA%\AutoClicker\report.log`
+- **HWID 使用调查上报**：启动时向写死的服务器上报本机唯一硬件标识（基于 MachineGuid，格式 `HW-xxxx`），地址为 `servercfg.h` 中的域名+端口常量（当前 `http://counter.bigbroadbean.top:3000/report?hwid=...`，无配置文件）；后台线程发送、5 秒超时，服务器不可用不影响正常使用；结果记录在 `%APPDATA%\AutoClicker\report.log`
 - **启动时版本检查**：启动时请求服务器最新版本号（`GET /version/latest`，服务器地址与上报共用 `servercfg.h` 写死的域名+端口）并与本地版本对比；有新版本则 MessageBox 弹窗提示（显示最新版本号 + 更新内容，内容来自 `GET /content/latest`）；已是最新或服务器不可用时静默不打扰，日志在 `%APPDATA%\AutoClicker\update.log`
 eport.log`
 eport.log`

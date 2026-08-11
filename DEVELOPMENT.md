@@ -284,6 +284,10 @@ Layout 中右侧卡片（右键/延迟）的预设按钮 x 坐标错误复用了
 
 按 Esc 清除快捷键后 `CaptureKey` 写 `vk=0` 并保存，但 `LoadConfig` 的读取条件是 `v >= 1 && v <= 255`，0 被拒绝加载，变量保持默认值——下次启动快捷键“复活”。后加的 `vk_canattack_key` 用了 `v >= 0` 所以正常。**修复**：四个快捷键统一改为 `v >= 0`；同时将 UI 提示从“Esc 取消”改为“Esc 清除”（行为本就是清除）。**教训**：范围校验要与允许值域一致，支持“空值”的字段必须显式包含 0。
 
+### 7.12 版本提示弹窗“双 v”（v2.5 版本检查）
+
+服务器返回的版本号带 `v` 前缀（`"v2.6"`），弹窗拼接代码是 `L"发现新版本 v" + 版本号` → 显示 `vv2.6`。**修复**：`versionutil.h` 新增 `NormalizeVersionDisplay`（去首尾空白 + 去 `v`/`V` 前缀），比较用原串、显示用规范化串；单测覆盖。**教训**：服务器字段值不可假设格式受控——显示到 UI 前的字符串一律先规范化；比较逻辑与显示逻辑应解耦（比较用原串保证严格性，显示用规范化串保证美观）。
+
 ---
 
 ## 8. 性能数据
@@ -368,8 +372,8 @@ msbuild AutoClicker.sln /p:Configuration=Debug   /p:Platform=x64
 ### 实现
 
 - **HWID 生成**（`report.cpp` `GetHwid()`）：优先读 `HKLM\SOFTWARE\Microsoft\Cryptography\MachineGuid`（每台机器唯一、重启不变），去掉横线/花括号、转大写 hex，格式 `HW-` + 32 位 hex；注册表不可读时兜底用系统盘卷序列号（`HW-%08X`），再不行 `HW-UNKNOWN`
-- **服务器地址**：文件顶部常量 `kReportHost` / `kReportPort` / `kReportPath` 写死（域名+端口模式，**无配置文件**）；当前测试为 `http://localhost:3000/report`，部署时只改这三个常量
-- **发送**：WinHTTP（`#pragma comment(lib, "winhttp.lib")`，系统自带、无第三方依赖）；`WINHTTP_ACCESS_TYPE_NO_PROXY` 直连（本地测试专用，若日后部署公网域名且需走系统代理，改为 `WINHTTP_ACCESS_TYPE_DEFAULT_PROXY`）；`WinHttpSetTimeouts` 给解析/连接/发送/接收全阶段 5s 硬上限——服务器不可用时线程最多挂 5s
+- **服务器地址**：`servercfg.h` 顶部常量 `kServerHost` / `kServerPort` / `kServerPath` 写死（域名+端口模式，**无配置文件**）；当前线上为 `http://counter.bigbroadbean.top:3000/report`（report 与 update 共用，改一处两边生效）
+- **发送**：WinHTTP（`#pragma comment(lib, "winhttp.lib")`，系统自带、无第三方依赖）；`WINHTTP_ACCESS_TYPE_NO_PROXY` 直连（实测公网服务器连接 70ms / 总耗时 130ms，5s 超时充足；若部署环境需走系统代理，改为 `WINHTTP_ACCESS_TYPE_DEFAULT_PROXY`）；`WinHttpSetTimeouts` 给解析/连接/发送/接收全阶段 5s 硬上限——服务器不可用时线程最多挂 5s
 - **线程**：`StartHwidReporter()` 在 `WinMain` 中启动 detached 线程，fire-and-forget，与 UI / 连点 / 注入线程完全隔离；失败只写日志 `%APPDATA%\AutoClicker\report.log`（追加式，与 inject.log 同目录），绝不弹窗、不阻塞
 - **URL 编码**：HWID 只含 hex 与 `-`（均为 URL 安全字符），仍做了防御性 percent-encoding（`UrlEncode`）
 
@@ -399,7 +403,8 @@ msbuild AutoClicker.sln /p:Configuration=Debug   /p:Platform=x64
 - **接口**：`GET /version/latest` → `{"code":0,"data":{"version":"2.6.0",...}}`；`GET /content/latest` → `{"code":0,"data":{"update_content":"...",...}}`；服务器未设置时 `data:null`
 - **JSON 解析**：`GetJsonString` 极简提取（无第三方库），处理 `\n \r \t \" \\` 转义；`\uXXXX` 不处理（Node JSON.stringify 直接输出原始 UTF-8，服务器内容受控）
 - **版本比较** `CompareVersions`（versionutil.h）：动态解析，只比较数字段——忽略 `v` 前缀、`.`/`-` 分隔符，各段按数值比较（非字典序），段数不同时缺段按 0 处理（"2.5" < "2.5.1" < "2.10"）；已解析过数字段后遇到字母视为后缀（beta/rc 等）开始，忽略其后全部内容（"v2.5" == "2.5"，"2.5.0-rc1" == "2.5"，即预发布不高于正式版）。踩坑：段相等时不能以"当前字符非数字"判结束（分隔符 `.` 也是非数字，导致 "2.5" 与 "2.6.0" 被误判相等），必须两边都到字符串末尾才算相等
-- **单元测试**：仓库根目录 `test_version.cpp`（不进 vcxproj），25 个用例覆盖 v 前缀/位数不同/数值比较/后缀/边界；编译运行：`cl /std:c++20 /EHsc /utf-8 /I AutoClicker test_version.cpp`
+- **弹窗显示规范化** `NormalizeVersionDisplay`（versionutil.h）：比较用原串，显示前去掉首尾空白与 `v`/`V` 前缀——服务器返回 `"v2.6"` 时若直接拼 `"发现新版本 v" + 版本号` 会显示 `vv2.6`（踩坑，见 §7.12）
+- **单元测试**：仓库根目录 `test_version.cpp`（不进 vcxproj），30 个用例覆盖 v 前缀/位数不同/数值比较/后缀/边界/显示规范化；编译运行：`cl /std:c++20 /EHsc /utf-8 /I AutoClicker test_version.cpp`
 - **弹窗**：后台线程直接 `MessageBoxW`（MB_OK | MB_ICONINFORMATION | MB_TOPMOST），标题「AutoClicker 发现新版本」，内容含当前版本/最新版本/更新内容；不阻塞 UI 线程
 - **共用**：域名+端口常量在 `servercfg.h`（与 HWID 上报共用，改一处两边生效）；GET 工具在 `httputil.cpp`
 
