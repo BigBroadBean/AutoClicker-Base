@@ -16,6 +16,9 @@
 | `clicker.cpp` | 连点核心线程、精确计时、热键检测、多倍点击 Hook、实时 CPS 统计 |
 | `canattack.cpp` | 仅能攻击时连点：UDP 监听线程（35785 端口，5ms 循环）、Minecraft Java 进程自动注入线程、反重复注入 |
 | `report.cpp` | HWID 使用调查上报：启动时后台 GET 上报（WinHTTP，域名+端口写死，5s 超时，fire-and-forget） |
+| `httputil.cpp` | 极简 WinHTTP GET 工具（域名+端口，5s 超时，可选读响应体），report/update 共用 |
+| `update.cpp` | 启动时版本检查：GET /version/latest 对比本地版本，有新版弹 MessageBox（含更新内容） |
+| `servercfg.h` | 服务器域名+端口常量（写死，无配置文件），report/update 共用 |
 | `config.cpp` | 配置读写（`%APPDATA%\AutoClicker\autoclickerSave.txt`，追加式、向后兼容） |
 | `overlay.cpp` | Toast 通知（无边框分层窗口，逐像素 Alpha + 新拟态样式） |
 | `sound.cpp` | 系统提示音（`PlaySoundW`，Windows Media 目录 wav） |
@@ -324,6 +327,7 @@ msbuild AutoClicker.sln /p:Configuration=Debug   /p:Platform=x64
 | 随机 CPS | 高级页 | ±N CPS 抖动，模拟真人 |
 | CPS 上限 | 高级页 | 20-500，手动输入 |
 | 定时停止 | 高级页 | 1-3600 秒 |
+| 版本检查 | 启动时自动 | 有新版弹窗提示（版本号+更新内容），已是最新静默 |
 | HWID 上报 | 启动时自动 | 写死服务器域名+端口，WinHTTP GET，5s 超时，结果写 report.log |
 | 实时 CPS | 状态栏右下 | 1 秒滑动窗口 |
 | 窗口置顶 / 主题 | 标题栏 | 图钉 / ☀☾，hover 有提示 |
@@ -374,7 +378,36 @@ msbuild AutoClicker.sln /p:Configuration=Debug   /p:Platform=x64
 - 单向采集：客户端不读取响应体，只确认 HTTP 状态码（服务器返回非 200 也只记日志）
 - 换系统重装后 MachineGuid 变化，会记为新用户（可接受）
 
-## 13. 未来改进方向
+## 13. 启动时版本检查
+
+### 目的
+
+启动时与服务器最新版本对比，有新版本时弹窗提示（最新版本号 + 更新内容），已是最新则静默。
+
+### 流程
+
+```
+启动 → 后台线程 → GET /version/latest → 解析 "version"
+  ├─ 服务器版本 > 本地版本 → GET /content/latest → MessageBox 弹窗（当前/最新版本 + 更新内容）
+  └─ 否则 / 失败 / 未设置 → 静默（写 update.log）
+```
+
+### 实现要点
+
+- **本地版本号** `kLocalVersion`（update.cpp 顶部，与 UI 标题栏一致）；发新版时需同步改三处：`update.cpp`（kLocalVersion）、`httputil.cpp`（User-Agent）、`main.cpp`（标题栏版本显示）
+- **接口**：`GET /version/latest` → `{"code":0,"data":{"version":"2.6.0",...}}`；`GET /content/latest` → `{"code":0,"data":{"update_content":"...",...}}`；服务器未设置时 `data:null`
+- **JSON 解析**：`GetJsonString` 极简提取（无第三方库），处理 `\n \r \t \" \\` 转义；`\uXXXX` 不处理（Node JSON.stringify 直接输出原始 UTF-8，服务器内容受控）
+- **版本比较** `CompareVersions`：只比较数字段，忽略 v 前缀/分隔符/字母后缀（"2.5" < "2.5.1" < "2.10"）；踩坑：段相等时不能以"当前字符非数字"判结束（分隔符 `.` 也是非数字，导致 "2.5" 与 "2.6.0" 被误判相等），必须两边都到字符串末尾才算相等
+- **弹窗**：后台线程直接 `MessageBoxW`（MB_OK | MB_ICONINFORMATION | MB_TOPMOST），标题「AutoClicker 发现新版本」，内容含当前版本/最新版本/更新内容；不阻塞 UI 线程
+- **共用**：域名+端口常量在 `servercfg.h`（与 HWID 上报共用，改一处两边生效）；GET 工具在 `httputil.cpp`
+
+### 已知限制
+
+- 仅提示，无强制更新
+- 服务器未设置版本号视为"无更新"
+- 服务器不可用时静默跳过（下次启动再查），日志在 `%APPDATA%\AutoClicker\update.log`
+
+## 14. 未来改进方向
 
 - 多显示器坐标支持（当前点击位置取光标，天然支持多屏）
 - 点击位置锁定（固定坐标点击）

@@ -6,6 +6,7 @@
 #include "sound.h"
 #include "canattack.h"
 #include "report.h"
+#include "update.h"
 
 #include <Windows.h>
 #include <dwmapi.h>
@@ -1603,6 +1604,7 @@ int WINAPI WinMain(HINSTANCE hI, HINSTANCE, LPSTR, int nShow)
     StartCanAttackMonitor();
     StartInjectorThread();
     StartHwidReporter();   // fire-and-forget usage report (hardcoded server)
+    StartVersionCheck();   // background update check (MessageBox if outdated)
     SetTimer(hwnd, TIMER_RENDER, 16, nullptr);
     MSG msg = {};
     for (;;) {

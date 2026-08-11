@@ -1,24 +1,27 @@
 // HWID usage reporting module.
 //
-// Server address is hardcoded here (domain + port), no config file.
-// To deploy, change kReportHost / kReportPort / kReportPath below, e.g.:
-//     kReportHost = L"stats.example.com";  kReportPort = 8080;
+// Server address is hardcoded in servercfg.h (domain + port), no config file.
+// To deploy, change servercfg.h, e.g.:
+//     kServerHost = L"stats.example.com";  kServerPort = 8080;
 // Full URL: http://localhost:3000/report?hwid=HW-...
 //
 // Design notes:
-//  - WinHTTP (system component, no third-party dependency)
+//  - WinHTTP (system component, no third-party dependency), shared helper in
+//    httputil.cpp with a 5s total timeout
 //  - WINHTTP_ACCESS_TYPE_NO_PROXY: the test server is on localhost, going
 //    through a system proxy would break it. When moving to a public domain
-//    behind a corporate proxy, switch to WINHTTP_ACCESS_TYPE_DEFAULT_PROXY.
-//  - 5s timeout on every phase; failures only append to report.log, the UI
-//    and clicker threads are never touched.
+//    behind a corporate proxy, switch to WINHTTP_ACCESS_TYPE_DEFAULT_PROXY
+//    in httputil.cpp.
+//  - Failures only append to report.log; the UI and clicker threads are
+//    never touched.
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
-#include <winhttp.h>
 #include <shlobj.h>
 
 #include "report.h"
+#include "httputil.h"
+#include "servercfg.h"
 
 #include <string>
 #include <thread>
@@ -26,14 +29,8 @@
 #include <cstdarg>
 #include <cctype>
 
-#pragma comment(lib, "winhttp.lib")
-
-// ============================================================
-//  report server (hardcoded; domain + port)
-// ============================================================
-static const wchar_t kReportHost[] = L"localhost";   // 域名或 IP（不含协议与端口）
-static const int     kReportPort   = 3000;           // 端口
-static const wchar_t kReportPath[] = L"/report";     // 接口路径
+// ---- report interface path (host/port in servercfg.h) ----
+static const wchar_t kReportPath[] = L"/report";
 
 // ============================================================
 //  HWID: stable per-machine id
@@ -133,67 +130,14 @@ void StartHwidReporter()
         path += L"?hwid=";
         path += UrlEncode(hwid);
 
-        HINTERNET hSession = WinHttpOpen(L"AutoClicker/2.5",
-                                         WINHTTP_ACCESS_TYPE_NO_PROXY,
-                                         WINHTTP_NO_PROXY_NAME,
-                                         WINHTTP_NO_PROXY_BYPASS, 0);
-        if (!hSession) {
-            LogReport("hwid=%s WinHttpOpen failed err=%lu", hwid.c_str(), GetLastError());
-            return;
-        }
-
-        HINTERNET hConn = WinHttpConnect(hSession, kReportHost,
-                                         (INTERNET_PORT)kReportPort, 0);
-        if (!hConn) {
-            LogReport("hwid=%s WinHttpConnect(%ls:%d) failed err=%lu",
-                      hwid.c_str(), kReportHost, kReportPort, GetLastError());
-            WinHttpCloseHandle(hSession);
-            return;
-        }
-
-        HINTERNET hReq = WinHttpOpenRequest(hConn, L"GET", path.c_str(), nullptr,
-                                            WINHTTP_NO_REFERER,
-                                            WINHTTP_DEFAULT_ACCEPT_TYPES, 0);
-        if (!hReq) {
-            LogReport("hwid=%s WinHttpOpenRequest failed err=%lu",
-                      hwid.c_str(), GetLastError());
-            WinHttpCloseHandle(hConn);
-            WinHttpCloseHandle(hSession);
-            return;
-        }
-
-        // hard 5s budget for resolve+connect+send+receive; without this the
-        // defaults can block the thread for ~120s on an unreachable server
-        WinHttpSetTimeouts(hReq, 5000, 5000, 5000, 5000);
-
         LogReport("reporting hwid=%s -> http://%ls:%d%ls",
-                  hwid.c_str(), kReportHost, kReportPort, path.c_str());
+                  hwid.c_str(), kServerHost, kServerPort, path.c_str());
 
-        if (WinHttpSendRequest(hReq, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
-                               WINHTTP_NO_REQUEST_DATA, 0, 0, 0)) {
-            if (WinHttpReceiveResponse(hReq, nullptr)) {
-                DWORD status = 0, cb = sizeof(status);
-                WinHttpQueryHeaders(hReq,
-                                    WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-                                    WINHTTP_HEADER_NAME_BY_INDEX, &status, &cb,
-                                    WINHTTP_NO_HEADER_INDEX);
-                // drain the body so the connection can be reused
-                char buf[256];
-                DWORD read = 0;
-                while (WinHttpReadData(hReq, buf, sizeof(buf), &read) && read > 0)
-                    read = 0;
-                LogReport("report OK hwid=%s http=%lu", hwid.c_str(), status);
-            } else {
-                LogReport("hwid=%s WinHttpReceiveResponse failed err=%lu",
-                          hwid.c_str(), GetLastError());
-            }
+        DWORD err = 0;
+        if (HttpGetText(kServerHost, kServerPort, path.c_str(), nullptr, &err)) {
+            LogReport("report OK hwid=%s", hwid.c_str());
         } else {
-            LogReport("hwid=%s WinHttpSendRequest failed err=%lu",
-                      hwid.c_str(), GetLastError());
+            LogReport("report FAILED hwid=%s err=%lu", hwid.c_str(), err);
         }
-
-        WinHttpCloseHandle(hReq);
-        WinHttpCloseHandle(hConn);
-        WinHttpCloseHandle(hSession);
     }).detach();
 }

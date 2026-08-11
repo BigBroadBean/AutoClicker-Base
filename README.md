@@ -23,6 +23,7 @@ A lightweight Windows auto-clicker with a **sidebar navigation + Neumorphism UI*
 - **CPS limit** to prevent clicking too fast (type a value directly)
 - **Auto-stop timer**: stops the clicker after N seconds
 - **HWID usage reporting**: at startup reports a stable per-machine hardware ID (MachineGuid-derived, `HW-xxxx`) to a hardcoded server — `http://<domain>:<port>/report?hwid=...` (domain + port constants in `report.cpp`, no config file); fire-and-forget background request with a 5s timeout, an unreachable server never blocks the UI; results logged to `%APPDATA%\AutoClicker\report.log`
+- **Startup update check**: at startup compares the local version against the server's latest (`GET /version/latest`); if a newer version exists a MessageBox pops up showing the latest version number + changelog (`GET /content/latest`); already-up-to-date or unreachable server → silent (details in `%APPDATA%\AutoClicker\update.log`)
 - **Realtime CPS readout**: bottom-right chip shows the live click rate (1s sliding window)
 - **Custom hotkeys**: press any key to bind (Esc clears to “none”), with guide toast
 - **Keep-click mode**: auto-click without holding the hotkey

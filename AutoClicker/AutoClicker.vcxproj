@@ -143,22 +143,27 @@
     <ClInclude Include="canattack.h" />
     <ClInclude Include="clicker.h" />
     <ClInclude Include="config.h" />
+    <ClInclude Include="httputil.h" />
     <ClInclude Include="overlay.h" />
     <ClInclude Include="report.h" />
     <ClInclude Include="resource.h" />
+    <ClInclude Include="servercfg.h" />
     <ClInclude Include="sound.h" />
     <ClInclude Include="types.h" />
     <ClInclude Include="ui.h" />
+    <ClInclude Include="update.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="canattack.cpp" />
     <ClCompile Include="clicker.cpp" />
     <ClCompile Include="config.cpp" />
+    <ClCompile Include="httputil.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="overlay.cpp" />
     <ClCompile Include="report.cpp" />
     <ClCompile Include="sound.cpp" />
     <ClCompile Include="ui.cpp" />
+    <ClCompile Include="update.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="AutoClicker.rc" />
