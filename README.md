@@ -19,7 +19,8 @@ A lightweight Windows auto-clicker with a **sidebar navigation + Neumorphism UI*
 - **Multi-click mode** with configurable multiplier (1-5x) and delay (1-200ms), plus 2x/3x/4x/5x and 10/25/50/100ms presets
 - **Scroll-to-click**: converts wheel scrolls into left/right clicks
 - **Random CPS** jitter to mimic human behavior
-- **Attack-only clicking** (accessory of the direct clicker): auto-injects MCCanAttackJni.dll into Minecraft Java processes and reads the live “can attack the targeted entity” state (0/1) via UDP port 35785 (5ms updates); when enabled, the clicker only clicks while an attack is possible, otherwise it behaves as before. Supported versions: **1.8.9 / 1.12.2 / 1.20.1 (incl. their Forge versions)**
+- **Attack-only clicking** (accessory of the direct clicker): auto-injects MCCombatStatusJni.dll into Minecraft Java processes and reads the live “can attack the targeted entity” state (0/1) via UDP port 35785 (5ms updates); when enabled, the clicker only clicks while an attack is possible, otherwise it behaves as before. Supported versions: **1.8.9 / 1.12.2 / 1.20.1 (incl. their Forge versions)**
+- **Place-only right-clicking** (accessory of the direct clicker, same DLL): the UDP datagram also carries a 2nd byte — “is the held item a placeable” (0/1, refreshed together with the attack state at 5ms); when enabled, only the RIGHT button clicks while the player holds a block placeable (ItemBlock/BlockItem). Independent of the attack-only gate; both can be on at once. Enabling this gate also triggers the auto-injection (shared injection channel)
 - **CPS limit** to prevent clicking too fast (type a value directly)
 - **Auto-stop timer**: stops the clicker after N seconds
 - **HWID usage reporting**: at startup reports a stable per-machine hardware ID (MachineGuid-derived, `HW-xxxx`) to a hardcoded server — `http://<domain>:<port>/report?hwid=...` (domain + port constants in `servercfg.h`, no config file); fire-and-forget background request with a 5s timeout, an unreachable server never blocks the UI; results logged to `%APPDATA%\AutoClicker\report.log`
@@ -55,19 +56,20 @@ msbuild AutoClicker.sln /p:Configuration=Release /p:Platform=x64          # Net
 msbuild AutoClicker.sln /p:Configuration=Release-Base /p:Platform=x64      # Base
 ```
 
-Building requires `MCCanAttackJni.dll` in the repository root (a PreBuildEvent copies it into the project dir and it is embedded into the exe as an RCDATA resource).
+Building requires `MCCombatStatusJni.dll` in the repository root (a PreBuildEvent copies it into the project dir and it is embedded into the exe as an RCDATA resource).
 
 ## Usage
 
 - **Sidebar**: click the icons to switch pages (Click / Multi / Scroll / Advanced), or use arrow keys
-- **Click page**: left/right toggles + CPS sliders + presets + clicker hotkey + keep mode
+- **Click page**: left/right toggles + CPS sliders + presets + clicker hotkey + keep mode + attack-only gate / place-only right-click gate (each with a live status chip and hotkey)
 - **Multi page**: multiplier/delay sliders + presets + multi hotkey
 - **Scroll page**: scroll-click toggle + left/right selector + two hotkeys
 - **Advanced page**: CPS limit, random CPS, auto-stop timer
 - **Hotkeys**: click a hotkey button, then press any key to bind (Esc clears to “none”)
-- **Attack-only gate**: toggle on the Click page (row 3); when on, only the LEFT button pauses unless the targeted entity is attackable (right button is unaffected). Status bar has a 4th indicator (green=attackable, red=not, dim=no game data) and the Click page shows a live 可攻击/不可攻击/未连接 chip; bindable hotkey. Fail-safe: no UDP data (game closed / DLL missing) is treated as “cannot attack”
-- **Auto-injection**: after the attack-only gate is enabled, a background loop (1s period) scans javaw/java processes and injects MCCanAttackJni.dll into every Minecraft Java client not yet injected (identified by GLFW30/LWJGL window class, x64 only, no double injection, re-injects after game restarts); **nothing is injected while the feature is off**. Note: NetEase China Edition (game box) has anti-cheat protection - injection is detected and the game gets terminated, so the feature does not work there
-- **Single-file distribution**: MCCanAttackJni.dll is embedded into the exe and auto-extracted to `%TEMP%\AutoClicker\` at startup; a sidecar DLL next to the exe takes priority when present (for DLL updates)
+- **Attack-only gate**: toggle on the Click page (row 3); when on, only the LEFT button pauses unless the targeted entity is attackable (right button is unaffected). Status bar has a 4th indicator (green=attackable, red=not, dim=no game data; the 5th one shows the held-item state) and the Click page shows a live 可攻击/不可攻击/未连接 chip; bindable hotkey. Fail-safe: no UDP data (game closed / DLL missing) is treated as “cannot attack”
+- **Place-only right-click gate**: toggle on the Click page (row 4); when on, only the RIGHT button pauses unless the held item is a placeable. Status bar has a 5th indicator (green=placeable, red=not, dim=no game data) and the Click page shows a live 手持放置物/非放置物/未连接 chip; bindable hotkey. Same 2-byte UDP stream — the attack gate and this gate are independent and can both be enabled
+- **Auto-injection**: after either the attack-only gate or the place-only gate is enabled, a background loop (1s period) scans javaw/java processes and injects MCCombatStatusJni.dll into every Minecraft Java client not yet injected (identified by GLFW30/LWJGL window class, x64 only, no double injection, re-injects after game restarts); **nothing is injected while both gates are off**. Note: NetEase China Edition (game box) has anti-cheat protection - injection is detected and the game gets terminated, so the feature does not work there
+- **Single-file distribution**: MCCombatStatusJni.dll is embedded into the exe and auto-extracted to `%TEMP%\AutoClicker\` at startup; a sidecar DLL next to the exe takes priority when present (for DLL updates)
 - **Counter**: shows total clicks of the session; click it to reset
 
 ## License

@@ -74,5 +74,5 @@ constexpr int BACKDROP_MAIN = 2;
 // ---- version (single source of truth) ----
 // 当前版本号（Net / Base 双产品线共用同一版本号，发新版只改这里；
 // main.cpp UI 显示、update.cpp 版本比较、httputil.cpp User-Agent 均引用）
-inline constexpr const char*    APP_VERSION   = "2.4";
-inline constexpr const wchar_t* APP_VERSION_W = L"2.4";
+inline constexpr const char*    APP_VERSION   = "2.5";
+inline constexpr const wchar_t* APP_VERSION_W = L"2.5";

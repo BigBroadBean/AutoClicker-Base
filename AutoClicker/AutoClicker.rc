@@ -6,5 +6,5 @@
 // remains consistent on all systems)
 IDI_ICON1               ICON                    "icon.ico"
 
-// Embedded MCCanAttackJni.dll (extracted to %%TEMP%% at startup)
-IDR_MC_DLL              RCDATA                  "MCCanAttackJni.dll"
+// Embedded MCCombatStatusJni.dll (extracted to %%TEMP%% at startup)
+IDR_MC_DLL              RCDATA                  "MCCombatStatusJni.dll"

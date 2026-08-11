@@ -50,6 +50,7 @@ enum Elem {
     // click page
     E_TGL_L, E_TGL_R, E_SL_L, E_SL_R, E_BTN_KEY, E_BTN_KEEP,
     E_BTN_CANATK, E_CHIP_CANATK, E_BTN_CANATK_KEY,
+    E_BTN_PLACE, E_CHIP_PLACE, E_BTN_PLACE_KEY,
     E_PRE_L0, E_PRE_L1, E_PRE_L2, E_PRE_L3,
     E_PRE_R0, E_PRE_R1, E_PRE_R2, E_PRE_R3,
     // multi page
@@ -91,6 +92,7 @@ struct LY {
     RECT tglL, tglR, tglScroll;
     RECT btnKey, btnKeep, btnMKey;
     RECT btnCanAtk, canAtkChip, btnCanAtkKey;
+    RECT btnPlace, placeChip, btnPlaceKey;
     RECT preL[4], preR[4], preM[4], preD[4];
     RECT btnScrollKey, btnScrollLR, btnScrollLRKey;
     RECT inpMax, chkRand, chkAutoStop, inpAutoStop;
@@ -131,6 +133,7 @@ static void Layout()
     int bh1 = 165, bh2 = 135;   // base row heights
     int nRows = 2;
     if (g_page == PAGE_SCROLL) { bh1 = 185; nRows = 1; }
+    if (g_page == PAGE_CLICK) bh2 = 180;   // bottom card hosts 4 rows (hotkey/keep + can-attack + can-place gates)
     int avail = H - 52 - top - (nRows - 1) * gap;
     int sumBase = bh1 + (nRows == 2 ? bh2 : 0);
     float f = (float)avail / (float)sumBase;
@@ -162,8 +165,8 @@ static void Layout()
     // ---- status bar ----
     L.status = { 12, H - 52, W - 12, H - 16 };
     {
-        int w = (L.status.right - L.status.left) / 5;
-        L.cntChip = { L.status.left + 4 * w + 8, L.status.top + 8,
+        int w = (L.status.right - L.status.left) / 6;
+        L.cntChip = { L.status.left + 5 * w + 8, L.status.top + 8,
                       L.status.right - 8, L.status.bottom - 8 };
     }
 
@@ -189,18 +192,25 @@ static void Layout()
         }
         L.btnKey  = { L.card[2].left + 16, L.card[2].top + S(32),
                       L.card[2].right - 16, L.card[2].top + S(56) };
-        L.btnKeep = { L.card[2].left + 16, L.card[2].top + S(66),
-                      L.card[2].right - 16, L.card[2].top + S(90) };
+        L.btnKeep = { L.card[2].left + 16, L.card[2].top + S(62),
+                      L.card[2].right - 16, L.card[2].top + S(84) };
         // row 3: can-attack gate toggle + live status chip + hotkey
+        // row 4: can-place  gate toggle + live status chip + hotkey
         {
             int cw = L.card[2].right - L.card[2].left - 32;
             int w1 = (int)(cw * 0.50f), w2 = (int)(cw * 0.20f);
-            L.btnCanAtk = { L.card[2].left + 16, L.card[2].top + S(96),
-                            L.card[2].left + 16 + w1, L.card[2].top + S(118) };
+            L.btnCanAtk = { L.card[2].left + 16, L.card[2].top + S(88),
+                            L.card[2].left + 16 + w1, L.card[2].top + S(110) };
             L.canAtkChip = { L.btnCanAtk.right + 8, L.btnCanAtk.top,
                              L.btnCanAtk.right + 8 + w2, L.btnCanAtk.bottom };
             L.btnCanAtkKey = { L.canAtkChip.right + 8, L.btnCanAtk.top,
                                L.card[2].right - 16, L.btnCanAtk.bottom };
+            L.btnPlace = { L.card[2].left + 16, L.card[2].top + S(114),
+                           L.card[2].left + 16 + w1, L.card[2].top + S(136) };
+            L.placeChip = { L.btnPlace.right + 8, L.btnPlace.top,
+                            L.btnPlace.right + 8 + w2, L.btnPlace.bottom };
+            L.btnPlaceKey = { L.placeChip.right + 8, L.btnPlace.top,
+                              L.card[2].right - 16, L.btnPlace.bottom };
         }
         break;
     case PAGE_MULTI:
@@ -272,6 +282,9 @@ static void Layout()
         g_hr[E_BTN_CANATK] = { L.btnCanAtk, E_BTN_CANATK, false };
         g_hr[E_CHIP_CANATK] = { L.canAtkChip, E_CHIP_CANATK, false };
         g_hr[E_BTN_CANATK_KEY] = { L.btnCanAtkKey, E_BTN_CANATK_KEY, false };
+        g_hr[E_BTN_PLACE] = { L.btnPlace, E_BTN_PLACE, false };
+        g_hr[E_CHIP_PLACE] = { L.placeChip, E_CHIP_PLACE, false };
+        g_hr[E_BTN_PLACE_KEY] = { L.btnPlaceKey, E_BTN_PLACE_KEY, false };
         for (int k = 0; k < 4; k++) {
             g_hr[E_PRE_L0 + k] = { L.preL[k], (Elem)(E_PRE_L0 + k), false };
             g_hr[E_PRE_R0 + k] = { L.preR[k], (Elem)(E_PRE_R0 + k), false };
@@ -941,6 +954,48 @@ static void Paint()
             SetTextColor(dc, g_rebinding == E_BTN_CANATK_KEY ? RGB(255, 255, 255) : TXT());
             DrawTextW(dc, t.c_str(), -1, (RECT*)&b, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         }
+        // can-place gate (right-click only while holding a placeable):
+        // toggle + live status chip + hotkey
+        {
+            RECT& b = L.btnPlace;
+            bool hover = g_hr[E_BTN_PLACE].hover;
+            if (placeOnlyRightClick) NeuInsetAccent(dc, b, 10, 2);
+            else NeuButton(dc, b, 10, hover, false);
+            SelectObject(dc, g_hfBody);
+            SetTextColor(dc, placeOnlyRightClick ? RGB(255, 255, 255) : TXT());
+            DrawTextW(dc, placeOnlyRightClick
+                              ? L"\x4ec5\x624b\x6301\x653e\x7f6e\x7269\x65f6\x53f3\x952e\x8fde\x70b9: \x5f00"
+                              : L"\x4ec5\x624b\x6301\x653e\x7f6e\x7269\x65f6\x53f3\x952e\x8fde\x70b9: \x5173",
+                      -1, (RECT*)&b, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        }
+        {
+            // live 0/1 from the UDP stream: 手持放置物 / 非放置物 / 未连接
+            RECT& chip = L.placeChip;
+            COLORREF cc = TXT_DIM();
+            const wchar_t* txt = L"\x672a\x8fde\x63a5";
+            if (CanAttackConnected()) {
+                if (g_canPlace.load(std::memory_order_relaxed) == 1) {
+                    cc = GREEN(); txt = L"\x624b\x6301\x653e\x7f6e\x7269";
+                } else {
+                    cc = RED(); txt = L"\x975e\x653e\x7f6e\x7269";
+                }
+            }
+            NeuInset(dc, chip, 8, 2, BTN());
+            SetTextColor(dc, cc);
+            SelectObject(dc, g_hfSmall);
+            DrawTextW(dc, txt, -1, (RECT*)&chip, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        }
+        {
+            RECT& b = L.btnPlaceKey;
+            std::wstring t = (g_rebinding == E_BTN_PLACE_KEY)
+                ? L"\x8bf7\x6309\x4e0b\x65b0\x952e\x2026"
+                : L"\x5feb\x6377\x952e: " + getKeyName(vk_place_key);
+            if (g_rebinding == E_BTN_PLACE_KEY) NeuInsetAccent(dc, b, 10, 2);
+            else NeuButton(dc, b, 10, g_hr[E_BTN_PLACE_KEY].hover, false);
+            SelectObject(dc, g_hfBody);
+            SetTextColor(dc, g_rebinding == E_BTN_PLACE_KEY ? RGB(255, 255, 255) : TXT());
+            DrawTextW(dc, t.c_str(), -1, (RECT*)&b, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        }
     }
 
     // ================= PAGE: MULTI =================
@@ -1158,8 +1213,8 @@ static void Paint()
     // ---- status bar ----
     {
         NeuRaised(dc, L.status, 12, 4, CARD());
-        int w = (L.status.right - L.status.left) / 5;
-        int x0 = L.status.left, x1 = x0 + w, x2 = x1 + w, x3 = x2 + w, x4 = x3 + w;
+        int w = (L.status.right - L.status.left) / 6;
+        int x0 = L.status.left, x1 = x0 + w, x2 = x1 + w, x3 = x2 + w, x4 = x3 + w, x5 = x4 + w;
         int baseY = L.status.top + 10;
 
         auto Dot = [&](int x, int y, COLORREF c) {
@@ -1211,6 +1266,19 @@ static void Paint()
             SetTextColor(dc, clr);
             RECT r = { x3 + 20, L.status.top, x4 - 4, L.status.bottom };
             DrawTextW(dc, canAttackOnlyClick ? L"\x653b\x51fb \x5f00" : L"\x653b\x51fb \x5173",
+                      -1, &r, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        }
+        // can-place gate: dot = live held-item state (green=1 / red=0 /
+        // dim=no game connected), text = feature switch state
+        {
+            COLORREF clr = RED();
+            if (!placeOnlyRightClick) clr = RED();
+            else if (!CanAttackConnected()) clr = TXT_DIM();
+            else clr = g_canPlace.load(std::memory_order_relaxed) ? GREEN() : RED();
+            Dot(x4 + 8, baseY, clr);
+            SetTextColor(dc, clr);
+            RECT r = { x4 + 20, L.status.top, x5 - 4, L.status.bottom };
+            DrawTextW(dc, placeOnlyRightClick ? L"\x653e\x7f6e \x5f00" : L"\x653e\x7f6e \x5173",
                       -1, &r, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
         }
         // realtime CPS chip
@@ -1298,6 +1366,43 @@ static void Paint()
                     L"\x6309\x4e0b\x4efb\x610f\x952e\x7ed1\x5b9a \xb7 Esc \x6e05\x9664"
                 };
                 DrawTip(L.btnCanAtkKey, tip, 2);
+            }
+            // can-place gate toggle
+            if (g_hr[E_BTN_PLACE].hover) {
+                static const wchar_t* tip[] = {
+                    L"\x5f00\x542f\x540e\x53ea\x6709\x5de6\x624b\x6301\x6709\x653e\x7f6e\x7269\xff08\x65b9\x5757\xff09\x65f6",
+                    L"\x53f3\x952e\x624d\x4f1a\x8fde\x70b9\xff0c\x5de6\x952e\x7167\x5e38",
+                    L"\x652f\x6301\x7248\x672c\uff1a1.8.9 / 1.12.2 / 1.20.1\uff08\u542b Forge\uff09"
+                };
+                DrawTip(L.btnPlace, tip, 3);
+            }
+            // can-place live status chip (text depends on current state)
+            if (g_hr[E_CHIP_PLACE].hover) {
+                if (!CanAttackConnected()) {
+                    static const wchar_t* tip[] = {
+                        L"\x672a\x6536\x5230\x6e38\x620f\x4e0a\x62a5\xff08\x672a\x6ce8\x5165/\x6e38\x620f\x672a\x8fd0\x884c\xff09"
+                    };
+                    DrawTip(L.placeChip, tip, 1);
+                } else if (g_canPlace.load(std::memory_order_relaxed) == 1) {
+                    static const wchar_t* tip[] = {
+                        L"\x5de6\x624b\x6240\x6301\x4e3a\x653e\x7f6e\x7269\xff0c\x53f3\x952e\x53ef\x8fde\x70b9"
+                    };
+                    DrawTip(L.placeChip, tip, 1);
+                } else {
+                    static const wchar_t* tip[] = {
+                        L"\x5de6\x624b\x4e0d\x662f\x653e\x7f6e\x7269\x6216\x7a7a\x624b",
+                        L"\x53f3\x952e\x8fde\x70b9\x5df2\x6682\x505c"
+                    };
+                    DrawTip(L.placeChip, tip, 2);
+                }
+            }
+            // can-place hotkey
+            if (g_hr[E_BTN_PLACE_KEY].hover) {
+                static const wchar_t* tip[] = {
+                    L"\x8bbe\x7f6e\x5f00\x5173\x5feb\x6377\x952e",
+                    L"\x6309\x4e0b\x4efb\x610f\x952e\x7ed1\x5b9a \xb7 Esc \x6e05\x9664"
+                };
+                DrawTip(L.btnPlaceKey, tip, 2);
             }
         }
     }
@@ -1415,6 +1520,13 @@ static void Click(HWND hwnd, Elem e)
         if (canAttackOnlyClick && !CanAttackDllAvailable())
             ShowToast(L"\x63d0\x793a", L"\x672a\x627e\x5230 DLL", RED());
         break;
+    case E_BTN_PLACE:
+        placeOnlyRightClick = !placeOnlyRightClick;
+        PlayCanPlaceSound(placeOnlyRightClick);
+        ShowCanPlaceToast(placeOnlyRightClick);
+        if (placeOnlyRightClick && !CanAttackDllAvailable())
+            ShowToast(L"\x63d0\x793a", L"\x672a\x627e\x5230 DLL", RED());
+        break;
     case E_PRE_L0: case E_PRE_L1: case E_PRE_L2: case E_PRE_L3: {
         int idx = e - E_PRE_L0;
         int c10 = kCpsPresets[idx] * 10;
@@ -1528,6 +1640,18 @@ static void Click(HWND hwnd, Elem e)
         Redraw(hwnd);
         {
             bool ok = CaptureKey(vk_canattack_key);
+            g_rebinding = E_NONE;
+            g_debounceUntil = GetTickCount64() + 200;
+            if (ok) PlayScrollLRSound();
+        }
+        break;
+    case E_BTN_PLACE_KEY:
+        if (g_rebinding != E_NONE) break;
+        g_rebinding = E_BTN_PLACE_KEY;
+        ShowToast(L"\x8bbe\x7f6e\x5feb\x6377\x952e", L"\x6309\x4e0b\x4efb\x610f\x952e \xb7 Esc \x6e05\x9664", ACCENT());
+        Redraw(hwnd);
+        {
+            bool ok = CaptureKey(vk_place_key);
             g_rebinding = E_NONE;
             g_debounceUntil = GetTickCount64() + 200;
             if (ok) PlayScrollLRSound();
@@ -1652,7 +1776,9 @@ LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM w, LPARAM l)
                      (randomCpsEnabled ? 128 : 0) | (g_inputOn ? 256 : 0) |
                      (canAttackOnlyClick ? 512 : 0) |
                      (g_canAttack.load() ? 1024 : 0) |
-                     (CanAttackConnected() ? 2048 : 0);
+                     (CanAttackConnected() ? 2048 : 0) |
+                     (placeOnlyRightClick ? 4096 : 0) |
+                     (g_canPlace.load() ? 8192 : 0);
             if (c != s_lastCount || cps != s_lastCps || st != s_lastStates) {
                 g_dirty = true;
                 s_lastCount = c;

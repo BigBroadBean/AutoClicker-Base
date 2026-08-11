@@ -346,6 +346,25 @@ void ClickerThreadProc()
                     prevCanAtk = curCanAtk;
                 }
 
+                // can-place gate hotkey (right-click only while holding a
+                // placeable) - edge detect + async wait-release
+                {
+                    static std::atomic<bool> busyPlace{ false };
+                    static bool prevPlace = false;
+                    bool curPlace = vk_place_key && (GetAsyncKeyState(vk_place_key) & 0x8000) != 0;
+                    if (curPlace && !prevPlace && !busyPlace.exchange(true)) {
+                        std::thread([]() {
+                            while (GetAsyncKeyState(vk_place_key) & 0x8000) Sleep(1);
+                            placeOnlyRightClick = !placeOnlyRightClick;
+                            PlayCanPlaceSound(placeOnlyRightClick);
+                            ShowCanPlaceToast(placeOnlyRightClick);
+                            SaveConfig();
+                            busyPlace = false;
+                        }).detach();
+                    }
+                    prevPlace = curPlace;
+                }
+
                 // scroll-to-click hotkey - edge detect + async wait-release
                 bool curScroll = vk_scroll_key && (GetAsyncKeyState(vk_scroll_key) & 0x8000) != 0;
                 {
@@ -429,21 +448,30 @@ void ClickerThreadProc()
 
         // can-attack gate: when enabled, only the LEFT button clicks while the
         // targeted creature is attackable (live 0/1 fed by the UDP monitor).
-        // The right button is never gated.
+        // can-place gate: when enabled, only the RIGHT button clicks while the
+        // held item is a placeable (ItemBlock/BlockItem). Both are independent.
         bool canAtkGate = !canAttackOnlyClick ||
                           g_canAttack.load(std::memory_order_relaxed) == 1;
+        bool canPlaceGate = !placeOnlyRightClick ||
+                            g_canPlace.load(std::memory_order_relaxed) == 1;
 
-        // gate flipped off mid-click: release the LEFT button immediately so
-        // the game never gets stuck with a pressed mouse button
+        // gate flipped off mid-click: release the held mouse button immediately
+        // so the game never gets stuck with a pressed mouse button
         if (!canAtkGate && mhwnd && leftSt == CS_WAIT_UP) {
             GetCursorPos(&lastPt);
             ScreenToClient(mhwnd, &lastPt);
             MyPostMessageA(mhwnd, WM_LBUTTONUP, 0, MAKELPARAM(lastPt.x, lastPt.y));
             leftSt = CS_IDLE;
         }
+        if (!canPlaceGate && mhwnd && rightSt == CS_WAIT_UP) {
+            GetCursorPos(&lastPt);
+            ScreenToClient(mhwnd, &lastPt);
+            MyPostMessageA(mhwnd, WM_RBUTTONUP, 0, MAKELPARAM(lastPt.x, lastPt.y));
+            rightSt = CS_IDLE;
+        }
 
         bool leftActive = isstart && leftenabled && mhwnd != nullptr && !isMultiActive && canAtkGate;
-        bool rightActive = isstart && rightenabled && mhwnd != nullptr && !isMultiActive;
+        bool rightActive = isstart && rightenabled && mhwnd != nullptr && !isMultiActive && canPlaceGate;
 
         bool leftHeld = leftActive && ((GetAsyncKeyState(VK_LBUTTON) & 0x8000) || keepClicke);
         if (leftHeld) {

@@ -23,9 +23,12 @@
 //  state
 // ============================================================
 std::atomic<bool> canAttackOnlyClick{ false };   // default: feature OFF
+std::atomic<bool> placeOnlyRightClick{ false };  // default: feature OFF
 int vk_canattack_key = VK_F6;   // default: F6 (free in Minecraft; F1/F2/F3/F5/F11 are taken)
+int vk_place_key     = VK_F7;   // default: F7
 
 std::atomic<int> g_canAttack{ 0 };            // fail-safe: unknown -> cannot attack
+std::atomic<int> g_canPlace{ 0 };             // fail-safe: unknown -> not a placeable
 std::atomic<long long> g_canAttackLastMs{ 0 };
 
 static constexpr int    kCanAttackPort = 35785;
@@ -65,6 +68,9 @@ void StartCanAttackMonitor()
                     int flen = sizeof(from);
                     int n = recvfrom(s, buf, sizeof(buf), 0, (SOCKADDR*)&from, &flen);
                     if (n >= 1 && from.sin_addr.s_addr == htonl(INADDR_LOOPBACK)) {
+                        // 2-byte protocol: [byte0=canAttack][byte1=canPlace].
+                        // Old 1-byte datagrams still update canAttack (byte0 is
+                        // protocol-compatible); canPlace stays at its last value.
                         char c = buf[0];
                         if (c == '1' || c == 1) {
                             g_canAttack.store(1, std::memory_order_relaxed);
@@ -73,13 +79,23 @@ void StartCanAttackMonitor()
                         } else {
                             continue;   // garbage datagram: ignore, keep last state
                         }
+                        if (n >= 2) {
+                            char p = buf[1];
+                            if (p == '1' || p == 1) {
+                                g_canPlace.store(1, std::memory_order_relaxed);
+                            } else if (p == '0' || p == 0) {
+                                g_canPlace.store(0, std::memory_order_relaxed);
+                            }
+                        }
                         g_canAttackLastMs.store((long long)GetTickCount64(),
                                                 std::memory_order_relaxed);
                     } else {
                         // timeout: mark stale -> fail-safe "cannot attack"
                         long long last = g_canAttackLastMs.load(std::memory_order_relaxed);
-                        if (last != 0 && GetTickCount64() - last > kStaleMs)
+                        if (last != 0 && GetTickCount64() - last > kStaleMs) {
                             g_canAttack.store(0, std::memory_order_relaxed);
+                            g_canPlace.store(0, std::memory_order_relaxed);
+                        }
                     }
                     Sleep(5);   // 5ms loop, precisely adjusts the variable
                 }
@@ -135,7 +151,7 @@ static void EnableDebugPrivilege()
     }
 }
 
-// extract MCCanAttackJni.dll from the embedded RCDATA resource into
+// extract MCCombatStatusJni.dll from the embedded RCDATA resource into
 // %TEMP%\AutoClicker\ so a single exe is enough to run (no sidecar DLL)
 static bool ExtractEmbeddedDll()
 {
@@ -151,7 +167,7 @@ static bool ExtractEmbeddedDll()
     if (!GetTempPathA(MAX_PATH, path)) return false;
     strcat_s(path, "AutoClicker");
     CreateDirectoryA(path, nullptr);
-    strcat_s(path, "\\MCCanAttackJni.dll");
+    strcat_s(path, "\\MCCombatStatusJni.dll");
 
     HANDLE f = CreateFileA(path, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
                            FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -169,7 +185,7 @@ static bool ResolveDllPath(char* out, SIZE_T cap)
     GetModuleFileNameA(nullptr, path, MAX_PATH);
     char* slash = strrchr(path, '\\');
     if (slash) *(slash + 1) = '\0';
-    strcat_s(path, "MCCanAttackJni.dll");
+    strcat_s(path, "MCCombatStatusJni.dll");
     if (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES) {
         strncpy_s(out, cap, path, _TRUNCATE);
         return true;
@@ -177,14 +193,14 @@ static bool ResolveDllPath(char* out, SIZE_T cap)
     GetCurrentDirectoryA(MAX_PATH, path);
     size_t len = strlen(path);
     if (len > 0 && path[len - 1] != '\\') strcat_s(path, "\\");
-    strcat_s(path, "MCCanAttackJni.dll");
+    strcat_s(path, "MCCombatStatusJni.dll");
     if (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES) {
         strncpy_s(out, cap, path, _TRUNCATE);
         return true;
     }
     // 3. embedded copy extracted to %TEMP%\AutoClicker
     if (GetTempPathA(MAX_PATH, path)) {
-        strcat_s(path, "AutoClicker\\MCCanAttackJni.dll");
+        strcat_s(path, "AutoClicker\\MCCombatStatusJni.dll");
         if (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES) {
             strncpy_s(out, cap, path, _TRUNCATE);
             return true;
@@ -320,7 +336,7 @@ static bool InjectDll(DWORD pid, const char* path)
               pid, (void*)(uintptr_t)ret, wait);
     bool ok = (wait != WAIT_TIMEOUT) && ret != 0;
     // timed out? the module may still have loaded - verify to avoid re-injection
-    if (!ok && ProcessHasModule(pid, L"MCCanAttackJni.dll")) ok = true;
+    if (!ok && ProcessHasModule(pid, L"MCCombatStatusJni.dll")) ok = true;
     return ok;
 }
 
@@ -346,9 +362,14 @@ void StartInjectorThread()
 
         LogInject("=== injector started, dll=%s (idle until feature enabled) ===", dllPath);
         for (;;) {
-            // feature OFF: never inject anything (UDP monitor keeps running so
-            // the status chip still shows live state from already-injected games)
-            if (canAttackOnlyClick.load(std::memory_order_relaxed)) {
+            // Neither feature on: never inject anything (UDP monitor keeps
+            // running so the status chips still show live state from
+            // already-injected games). Injection starts as soon as EITHER the
+            // can-attack (left-button) gate or the can-place (right-button)
+            // gate is enabled; both gates share this single injector loop
+            // (already-injected PIDs are deduplicated in the set below).
+            if (canAttackOnlyClick.load(std::memory_order_relaxed) ||
+                placeOnlyRightClick.load(std::memory_order_relaxed)) {
                 HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
                 if (snap != INVALID_HANDLE_VALUE) {
                     PROCESSENTRY32W pe = {};
@@ -372,7 +393,7 @@ void StartInjectorThread()
                             LogProcessWindows(pe.th32ProcessID);
                             continue;
                         }
-                        if (ProcessHasModule(pe.th32ProcessID, L"MCCanAttackJni.dll")) {
+                        if (ProcessHasModule(pe.th32ProcessID, L"MCCombatStatusJni.dll")) {
                             injected.insert(pe.th32ProcessID);   // already loaded
                             LogInject("pid %lu (%ls): already loaded, marked", pe.th32ProcessID, nm);
                             continue;

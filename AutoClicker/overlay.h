@@ -21,3 +21,9 @@ inline void ShowCanAttackToast(bool enabled) {
               enabled ? L"\x5f00" : L"\x5173",
               enabled ? GREEN() : RED());
 }
+
+inline void ShowCanPlaceToast(bool enabled) {
+    ShowToast(L"\x4ec5\x6301\x6251\x7f6e\x7269\x65f6\x53f3\x952e\x8fde\x70b9",
+              enabled ? L"\x5f00" : L"\x5173",
+              enabled ? GREEN() : RED());
+}

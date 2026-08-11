@@ -69,6 +69,10 @@ void LoadConfig()
         canAttackOnlyClick = (v != 0);
     if (std::getline(file, line) && sscanf_s(line.c_str(), "%d", &v) == 1 && v >= 0 && v <= 255)
         vk_canattack_key = v;
+    if (std::getline(file, line) && sscanf_s(line.c_str(), "%d", &v) == 1)
+        placeOnlyRightClick = (v != 0);
+    if (std::getline(file, line) && sscanf_s(line.c_str(), "%d", &v) == 1 && v >= 0 && v <= 255)
+        vk_place_key = v;
 
     leftms = cpsToMs(cpsLeft10);
     rightms = cpsToMs(cpsRight10);
@@ -99,5 +103,7 @@ void SaveConfig()
          << autoStopSeconds << "\n"
          << (topmost ? 1 : 0) << "\n"
          << (canAttackOnlyClick ? 1 : 0) << "\n"
-         << vk_canattack_key << "\n";
+         << vk_canattack_key << "\n"
+         << (placeOnlyRightClick ? 1 : 0) << "\n"
+         << vk_place_key << "\n";
 }

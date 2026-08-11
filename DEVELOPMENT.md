@@ -14,7 +14,7 @@
 |---|---|
 | `main.cpp` | 主窗口、GDI 自绘 UI（新拟态）、布局、命中测试、输入处理 |
 | `clicker.cpp` | 连点核心线程、精确计时、热键检测、多倍点击 Hook、实时 CPS 统计 |
-| `canattack.cpp` | 仅能攻击时连点：UDP 监听线程（35785 端口，5ms 循环）、Minecraft Java 进程自动注入线程、反重复注入 |
+| `canattack.cpp` | 仅能攻击时连点 + 仅手持放置物时右键连点：UDP 监听线程（35785 端口，2 字节报文，5ms 循环）、Minecraft Java 进程自动注入线程、反重复注入 |
 | `report.cpp` | HWID 使用调查上报：启动时后台 GET 上报（WinHTTP，域名+端口写死，5s 超时，fire-and-forget） |
 | `httputil.cpp` | 极简 WinHTTP GET 工具（域名+端口，5s 超时，可选读响应体），report/update 共用 |
 | `update.cpp` | 启动时版本检查：GET /version/latest 对比本地版本，有新版弹 MessageBox（含更新内容） |
@@ -32,7 +32,7 @@
 
 - `main.cpp` 中 `#include` 与 `StartHwidReporter()`/`StartVersionCheck()` 调用均以 `#ifdef AUTOCLICKER_NET` 包裹
 - 头文件 report.h / update.h / httputil.h / servercfg.h 同样按配置排除（不参与编译）
-- 基础版仍保留 MCCanAttackJni 注入（仅能攻击时连点）——它是本机 UDP 通信，不属于外部网络交互
+- 基础版仍保留 MCCombatStatusJni 注入（仅能攻击时连点 / 仅手持放置物时右键连点）——它是本机 UDP 通信，不属于外部网络交互
 | `config.cpp` | 配置读写（`%APPDATA%\AutoClicker\autoclickerSave.txt`，追加式、向后兼容） |
 | `overlay.cpp` | Toast 通知（无边框分层窗口，逐像素 Alpha + 新拟态样式） |
 | `sound.cpp` | 系统提示音（`PlaySoundW`，Windows Media 目录 wav） |
@@ -55,7 +55,7 @@
 | Hook 线程 | `WH_MOUSE_LL` 全局鼠标钩子 | 多倍点击、滚轮转点击；`GetMessageW` 阻塞零开销 |
 | Toast 线程 | 一次性通知动画 | detach，自清理 |
 | 注入线程 | 扫描 javaw/java 进程，向未注入的 MC 客户端注入 DLL | 1s 周期；功能关闭时完全不注入 |
-| UDP 监听线程 | 绑定 127.0.0.1:35785，接收 0/1 可攻击状态 | 5ms 循环，SO_RCVTIMEO 25ms |
+| UDP 监听线程 | 绑定 127.0.0.1:35785，接收 2 字节 [可攻击][手持放置物] 状态 | 5ms 循环，SO_RCVTIMEO 25ms |
 
 ### 连点线程循环结构
 
@@ -191,11 +191,11 @@ NeuButton      通用按钮：hover 时三层同心圆角光晕（内浓外淡�
 ┌ 标题栏：AutoClicker v1.9 | 📌置顶 | ☀/☾主题 ┐
 ├ 侧边栏（4 图标按钮）：连点 | 多倍 | 滚轮 | 高级
 │ 内容区：行1 = 两卡并排，行2 = 全宽卡
-│   · 连点页：左键卡 | 右键卡 / 快捷键+保持卡
+│   · 连点页：左键卡 | 右键卡 / 快捷键+保持+仅能攻击时连点+仅手持放置物时右键连点卡
 │   · 多倍页：倍率卡 | 延迟卡 / 快捷键卡
 │   · 滚轮页：全宽卡
 │   · 高级页：CPS上限卡 | 随机CPS卡 / 定时停止卡
-└ 状态栏：连点● | 多倍● | 滚轮● | 实时CPS chip ┘
+└ 状态栏：连点● | 多倍● | 滚轮● | 攻击● | 放置● | 实时CPS chip ┘
 ```
 
 ### 响应式缩放
@@ -224,7 +224,7 @@ NeuButton      通用按钮：hover 时三层同心圆角光晕（内浓外淡�
 
 - 路径：`%APPDATA%\AutoClicker\autoclickerSave.txt`（`CSIDL_APPDATA`）
 - 格式：每行一个值，**顺序敏感**；新字段**追加在末尾** → 旧配置文件天然兼容
-- 当前字段顺序（19 行）：cpsLeft10, cpsRight10, cpsMax, randomCpsEnabled, randomCpsRange, vk_key, leftenabled, rightenabled, keepClicke, vk_multi_key, multiMul, multiDelayMs, vk_scroll_key, scrollClickButton, vk_scroll_lr_key, theme, autoStopEnabled, autoStopSeconds, topmost
+- 当前字段顺序（23 行）：cpsLeft10, cpsRight10, cpsMax, randomCpsEnabled, randomCpsRange, vk_key, leftenabled, rightenabled, keepClicke, vk_multi_key, multiMul, multiDelayMs, vk_scroll_key, scrollClickButton, vk_scroll_lr_key, theme, autoStopEnabled, autoStopSeconds, topmost, canAttackOnlyClick, vk_canattack_key, placeOnlyRightClick, vk_place_key
 - 载入时对每个值做范围校验（防手改损坏）
 
 ---
@@ -343,6 +343,8 @@ msbuild AutoClicker.sln /p:Configuration=Release-Base /p:Platform=x64     # Base
 | 左/右键连点 | 连点页 | 滑块 + 6/10/15/20 预设，保持模式免按 |
 | 多倍点击 | 多倍页 | 倍数 1-5、延迟 1-200ms、+/− 微调 |
 | 滚轮转点击 | 滚轮页 | 左/右选择 + 两个快捷键 |
+| 仅能攻击时连点 | 连点页 | 仅左键在可攻击时连点，含状态芯片 + 快捷键 |
+| 仅手持放置物时右键连点 | 连点页 | 仅右键在手握放置物时连点，含状态芯片 + 快捷键 |
 | 随机 CPS | 高级页 | ±N CPS 抖动，模拟真人 |
 | CPS 上限 | 高级页 | 20-500，手动输入 |
 | 定时停止 | 高级页 | 1-3600 秒 |
@@ -351,31 +353,36 @@ msbuild AutoClicker.sln /p:Configuration=Release-Base /p:Platform=x64     # Base
 | 实时 CPS | 状态栏右下 | 1 秒滑动窗口 |
 | 窗口置顶 / 主题 | 标题栏 | 图钉 / ☀☾，hover 有提示 |
 
-## 11. 仅能攻击时连点（MCCanAttackJni 联动）
+## 11. 仅能攻击时连点 / 仅手持放置物时右键连点（MCCombatStatusJni 联动）
+
+> DLL 由上游项目 [MCCombatStatus-JNI](https://github.com/BigBroadBean/MCCombatStatus-JNI)（V63+，原名 MCCanAttack-JNI）提供，内置 10 套命名映射自动探测。
 
 ### 协议（已通过反汇编确认）
 
-- `MCCanAttackJni.dll`（MinGW x64 JNI）被注入后通过 `JNI_GetCreatedJavaVMs` 附加 JVM，反射查找 `Minecraft.hitResult`（新旧映射名兼容，`func_71410_x`/`m_91087_` 等）
-- 判定结果写入状态结构 offset 0x14，循环 `Sleep(5)` 后 `sendto` 到 `127.0.0.1:35785`，载荷 1 字节：`'0'`(0x30) 不可攻击 / `'1'`(0x31) 可攻击
-- 另有共享内存 `Local\MCCanAttackStatus_<游戏PID>` 备用通道（未使用）
+- `MCCombatStatusJni.dll`（MinGW x64 JNI）被注入后通过 `JNI_GetCreatedJavaVMs` 附加 JVM，反射查找 `Minecraft.hitResult`（新旧映射名兼容，`func_71410_x`/`m_91087_` 等），同时解析手持物品链（1.8.9/1.12.2 的 `ItemBlock`、1.20.1 的 `BlockItem`，可选解析——失败仅 canPlace 恒 0，不拖垮 canAttack）
+- 判定结果写入共享内存 `Local\MCCombatStatus_<游戏PID>`，循环 `Sleep(5)` 后 `sendto` 到 `127.0.0.1:35785`，载荷 **2 字节**：
+  - `byte0 = '0'`(0x30) 不可攻击 / `'1'`(0x31) 可攻击（与旧版 1 字节协议完全一致）
+  - `byte1 = '0'`(0x30) 手持非放置物 / `'1'`(0x31) 手持放置物（V57+ 新增，兼容旧接收端）
 
 ### 本程序实现
 
-- **UDP 监听**：`canattack.cpp` 绑定 `127.0.0.1:35785`（仅回环），`SO_RCVTIMEO=25ms`，每轮 `Sleep(5)` 后 `recvfrom`；校验源地址为回环、载荷为 0/1 才更新 `g_canAttack`；无新包 300ms 后回落到 0（fail-safe，宁可不点不可误点）
-- **门控**：`clicker.cpp` 中 `canAtkGate = !canAttackOnlyClick || g_canAttack == 1`，左右键 `leftActive/rightActive` 加门控；门控在点击半途关闭时立即补发 UP（防止目标窗口卡按键）
-- **注入线程**（反注入要点）：
+- **UDP 监听**：`canattack.cpp` 绑定 `127.0.0.1:35785`（仅回环），`SO_RCVTIMEO=25ms`，每轮 `Sleep(5)` 后 `recvfrom`；校验源地址为回环才处理——`n>=1` 且 byte0 为 0/1 更新 `g_canAttack`，`n>=2` 时再按 byte1 更新 `g_canPlace`（兼容旧版 1 字节包：byte0 仍生效，canPlace 保持原值）；无新包 300ms 后两个状态一起回落到 0（fail-safe，宁可不点不可误点）
+- **门控**：`clicker.cpp` 中两个独立门 `canAtkGate = !canAttackOnlyClick || g_canAttack == 1`、`canPlaceGate = !placeOnlyRightClick || g_canPlace == 1`；`leftActive/rightActive` 分别加门控（可同时开启）；任一门控在点击半途关闭时立即补发对应按键的 UP（防止目标窗口卡按键）
+- **注入线程**（反注入要点，两个功能共用同一个注入线程；**任一开关开启即触发注入**，两个都关闭时不注入）：
   - 先 `SeDebugPrivilege`（应对游戏以管理员运行）
   - 只认 `javaw.exe`/`java.exe` + 拥有 `GLFW30`/`LWJGL` 窗口（识别 MC 客户端而非任意 Java 程序）
   - `IsWow64Process` 排除 32 位进程（DLL 是 x64）
   - `TH32CS_SNAPMODULE` 检查 DLL 是否已加载 → 绝不重复注入；已注入的 PID 入集合，进程退出后从集合清除（游戏重启会自动重新注入）
   - `CreateRemoteThread(LoadLibraryA)` 等待 3s，超时后复查模块列表再判定成败
-- **UI**：连点页第三行 = 开关按钮 + 实时状态芯片（可攻击/不可攻击/未连接）+ 快捷键按钮；状态栏第 4 个指示灯（绿=可攻击，红=不可，灰=无数据）；配置追加 2 行（末尾追加，向后兼容）
+- **UI**：连点页第三行 = 仅能攻击时连点开关 + 状态芯片（可攻击/不可攻击/未连接）+ 快捷键；第四行 = 仅手持放置物时右键连点开关 + 状态芯片（手持放置物/非放置物/未连接）+ 快捷键；状态栏第 4/5 个指示灯（绿=1，红=0，灰=无数据）；配置追加 4 行（末尾追加，向后兼容）
 
 ### 已知限制
 
 - 多个游戏实例同时上报时取最后到达的包（正常只玩一个）
 - 游戏以管理员运行时注入会被拒，需以管理员运行本程序
 - 端口 35785 被其他程序占用时无法接收（状态显示“未连接”）
+- 放置物判定链在某环境下解析失败时 `canPlace` 恒为 0（不影响 canAttack）
+- 旧版 1 字节 UDP 发送端（旧 DLL）下 canPlace 无数据：仅「仅能攻击时连点」可用，「仅手持放置物时右键连点」按 fail-safe 暂停右键
 
 ## 12. HWID 使用调查上报
 
@@ -413,7 +420,7 @@ msbuild AutoClicker.sln /p:Configuration=Release-Base /p:Platform=x64     # Base
 
 ### 实现要点
 
-- **版本号单一来源**：`types.h` 的 `APP_VERSION` / `APP_VERSION_W`（Net / Base 双产品线**共用同一版本号 v2.4**，无宏区分）；`main.cpp` 标题栏显示、`update.cpp` 的 `kLocalVersion`（版本比较）、`httputil.cpp` 的 User-Agent 全部引用它——**发新版只改 types.h 一处**
+- **版本号单一来源**：`types.h` 的 `APP_VERSION` / `APP_VERSION_W`（Net / Base 双产品线**共用同一版本号 v2.5**，无宏区分）；`main.cpp` 标题栏显示、`update.cpp` 的 `kLocalVersion`（版本比较）、`httputil.cpp` 的 User-Agent 全部引用它——**发新版只改 types.h 一处**
 - **接口**：`GET /version/latest` → `{"code":0,"data":{"version":"2.6.0",...}}`；`GET /content/latest` → `{"code":0,"data":{"update_content":"...",...}}`；服务器未设置时 `data:null`
 - **JSON 解析**：`GetJsonString` 极简提取（无第三方库），处理 `\n \r \t \" \\` 转义；`\uXXXX` 不处理（Node JSON.stringify 直接输出原始 UTF-8，服务器内容受控）
 - **版本比较** `CompareVersions`（versionutil.h）：动态解析，只比较数字段——忽略 `v` 前缀、`.`/`-` 分隔符，各段按数值比较（非字典序），段数不同时缺段按 0 处理（"2.5" < "2.5.1" < "2.10"）；已解析过数字段后遇到字母视为后缀（beta/rc 等）开始，忽略其后全部内容（"v2.5" == "2.5"，"2.5.0-rc1" == "2.5"，即预发布不高于正式版）。踩坑：段相等时不能以"当前字符非数字"判结束（分隔符 `.` 也是非数字，导致 "2.5" 与 "2.6.0" 被误判相等），必须两边都到字符串末尾才算相等

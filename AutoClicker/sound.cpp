@@ -39,3 +39,8 @@ void PlayCanAttackSound(bool enabled)
 {
     PlayMediaSound(enabled ? L"Windows Hardware Insert.wav" : L"Windows Hardware Remove.wav");
 }
+
+void PlayCanPlaceSound(bool enabled)
+{
+    PlayMediaSound(enabled ? L"Windows Hardware Insert.wav" : L"Windows Hardware Remove.wav");
+}
