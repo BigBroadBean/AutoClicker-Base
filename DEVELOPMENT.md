@@ -19,6 +19,7 @@
 | `httputil.cpp` | 极简 WinHTTP GET 工具（域名+端口，5s 超时，可选读响应体），report/update 共用 |
 | `update.cpp` | 启动时版本检查：GET /version/latest 对比本地版本，有新版弹 MessageBox（含更新内容） |
 | `servercfg.h` | 服务器域名+端口常量（写死，无配置文件），report/update 共用 |
+| `versionutil.h` | 版本工具（纯函数头文件）：点分数字版本比较 + JSON 字符串提取，update 模块与单元测试共用 |
 | `config.cpp` | 配置读写（`%APPDATA%\AutoClicker\autoclickerSave.txt`，追加式、向后兼容） |
 | `overlay.cpp` | Toast 通知（无边框分层窗口，逐像素 Alpha + 新拟态样式） |
 | `sound.cpp` | 系统提示音（`PlaySoundW`，Windows Media 目录 wav） |
@@ -397,7 +398,8 @@ msbuild AutoClicker.sln /p:Configuration=Debug   /p:Platform=x64
 - **本地版本号** `kLocalVersion`（update.cpp 顶部，与 UI 标题栏一致）；发新版时需同步改三处：`update.cpp`（kLocalVersion）、`httputil.cpp`（User-Agent）、`main.cpp`（标题栏版本显示）
 - **接口**：`GET /version/latest` → `{"code":0,"data":{"version":"2.6.0",...}}`；`GET /content/latest` → `{"code":0,"data":{"update_content":"...",...}}`；服务器未设置时 `data:null`
 - **JSON 解析**：`GetJsonString` 极简提取（无第三方库），处理 `\n \r \t \" \\` 转义；`\uXXXX` 不处理（Node JSON.stringify 直接输出原始 UTF-8，服务器内容受控）
-- **版本比较** `CompareVersions`：只比较数字段，忽略 v 前缀/分隔符/字母后缀（"2.5" < "2.5.1" < "2.10"）；踩坑：段相等时不能以"当前字符非数字"判结束（分隔符 `.` 也是非数字，导致 "2.5" 与 "2.6.0" 被误判相等），必须两边都到字符串末尾才算相等
+- **版本比较** `CompareVersions`（versionutil.h）：动态解析，只比较数字段——忽略 `v` 前缀、`.`/`-` 分隔符，各段按数值比较（非字典序），段数不同时缺段按 0 处理（"2.5" < "2.5.1" < "2.10"）；已解析过数字段后遇到字母视为后缀（beta/rc 等）开始，忽略其后全部内容（"v2.5" == "2.5"，"2.5.0-rc1" == "2.5"，即预发布不高于正式版）。踩坑：段相等时不能以"当前字符非数字"判结束（分隔符 `.` 也是非数字，导致 "2.5" 与 "2.6.0" 被误判相等），必须两边都到字符串末尾才算相等
+- **单元测试**：仓库根目录 `test_version.cpp`（不进 vcxproj），25 个用例覆盖 v 前缀/位数不同/数值比较/后缀/边界；编译运行：`cl /std:c++20 /EHsc /utf-8 /I AutoClicker test_version.cpp`
 - **弹窗**：后台线程直接 `MessageBoxW`（MB_OK | MB_ICONINFORMATION | MB_TOPMOST），标题「AutoClicker 发现新版本」，内容含当前版本/最新版本/更新内容；不阻塞 UI 线程
 - **共用**：域名+端口常量在 `servercfg.h`（与 HWID 上报共用，改一处两边生效）；GET 工具在 `httputil.cpp`
 
