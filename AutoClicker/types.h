@@ -72,13 +72,7 @@ constexpr int CORNER_ROUND  = 2;
 constexpr int BACKDROP_MAIN = 2;
 
 // ---- version (single source of truth) ----
-// 双产品线版本号：网络版 v2.5（定义 AUTOCLICKER_NET）/ 基础版 v2.4（Release-Base）。
-// 发新版只改这里；main.cpp（UI 显示）、update.cpp（版本比较）、httputil.cpp
-// （User-Agent）全部引用本常量，无需再同步多处。
-#ifdef AUTOCLICKER_NET
-inline constexpr const char*    APP_VERSION   = "2.5";
-inline constexpr const wchar_t* APP_VERSION_W = L"2.5";
-#else
+// 当前版本号（Net / Base 双产品线共用同一版本号，发新版只改这里；
+// main.cpp UI 显示、update.cpp 版本比较、httputil.cpp User-Agent 均引用）
 inline constexpr const char*    APP_VERSION   = "2.4";
 inline constexpr const wchar_t* APP_VERSION_W = L"2.4";
-#endif

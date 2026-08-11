@@ -413,7 +413,7 @@ msbuild AutoClicker.sln /p:Configuration=Release-Base /p:Platform=x64     # Base
 
 ### 实现要点
 
-- **版本号单一来源**：`types.h` 的 `APP_VERSION` / `APP_VERSION_W`（按 `AUTOCLICKER_NET` 宏区分：网络版 v2.5 / 基础版 v2.4）；`main.cpp` 标题栏显示、`update.cpp` 的 `kLocalVersion`（版本比较）、`httputil.cpp` 的 User-Agent 全部引用它——**发新版只改 types.h 一处**
+- **版本号单一来源**：`types.h` 的 `APP_VERSION` / `APP_VERSION_W`（Net / Base 双产品线**共用同一版本号 v2.4**，无宏区分）；`main.cpp` 标题栏显示、`update.cpp` 的 `kLocalVersion`（版本比较）、`httputil.cpp` 的 User-Agent 全部引用它——**发新版只改 types.h 一处**
 - **接口**：`GET /version/latest` → `{"code":0,"data":{"version":"2.6.0",...}}`；`GET /content/latest` → `{"code":0,"data":{"update_content":"...",...}}`；服务器未设置时 `data:null`
 - **JSON 解析**：`GetJsonString` 极简提取（无第三方库），处理 `\n \r \t \" \\` 转义；`\uXXXX` 不处理（Node JSON.stringify 直接输出原始 UTF-8，服务器内容受控）
 - **版本比较** `CompareVersions`（versionutil.h）：动态解析，只比较数字段——忽略 `v` 前缀、`.`/`-` 分隔符，各段按数值比较（非字典序），段数不同时缺段按 0 处理（"2.5" < "2.5.1" < "2.10"）；已解析过数字段后遇到字母视为后缀（beta/rc 等）开始，忽略其后全部内容（"v2.5" == "2.5"，"2.5.0-rc1" == "2.5"，即预发布不高于正式版）。踩坑：段相等时不能以"当前字符非数字"判结束（分隔符 `.` 也是非数字，导致 "2.5" 与 "2.6.0" 被误判相等），必须两边都到字符串末尾才算相等

@@ -6,12 +6,15 @@
 #include <winhttp.h>
 
 #include "httputil.h"
-#include "types.h"   // APP_VERSION (User-Agent)
+#include "types.h"   // APP_VERSION_W (User-Agent)
+
+#include <string>
 
 #pragma comment(lib, "winhttp.lib")
 
 namespace {
-const wchar_t kHttpUserAgent[] = L"AutoClicker/" APP_VERSION;   // 与版本号保持一致
+// User-Agent 与版本号保持一致（types.h 单点维护）
+const std::wstring kHttpUserAgent = std::wstring(L"AutoClicker/") + APP_VERSION_W;
 }
 
 bool HttpGetText(const wchar_t* host, int port, const wchar_t* path,
@@ -19,7 +22,7 @@ bool HttpGetText(const wchar_t* host, int port, const wchar_t* path,
 {
     auto fail = [outErr](DWORD err) { if (outErr) *outErr = err; return false; };
 
-    HINTERNET hSession = WinHttpOpen(kHttpUserAgent,
+    HINTERNET hSession = WinHttpOpen(kHttpUserAgent.c_str(),
                                      WINHTTP_ACCESS_TYPE_NO_PROXY,
                                      WINHTTP_NO_PROXY_NAME,
                                      WINHTTP_NO_PROXY_BYPASS, 0);
