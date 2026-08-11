@@ -6,11 +6,12 @@
 #include <winhttp.h>
 
 #include "httputil.h"
+#include "types.h"   // APP_VERSION (User-Agent)
 
 #pragma comment(lib, "winhttp.lib")
 
 namespace {
-const wchar_t kHttpUserAgent[] = L"AutoClicker/2.5";   // 与本地版本号保持一致
+const wchar_t kHttpUserAgent[] = L"AutoClicker/" APP_VERSION;   // 与版本号保持一致
 }
 
 bool HttpGetText(const wchar_t* host, int port, const wchar_t* path,

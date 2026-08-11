@@ -680,7 +680,8 @@ static void Paint()
         RECT vr = { tr.left, tr.top + 26, tr.right, tr.bottom };
         SetTextColor(dc, TXT_DIM());
         SelectObject(dc, g_hfSmall);
-        DrawTextW(dc, L"v2.5", -1, &vr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        std::wstring verStr = std::wstring(L"v") + APP_VERSION_W;
+        DrawTextW(dc, verStr.c_str(), -1, &vr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     }
 
     // ---- pin / theme buttons (with hover hints) ----

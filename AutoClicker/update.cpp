@@ -9,6 +9,7 @@
 #include "httputil.h"
 #include "servercfg.h"
 #include "versionutil.h"
+#include "types.h"
 
 #include <string>
 #include <thread>
@@ -16,8 +17,8 @@
 #include <cstdarg>
 #include <cctype>
 
-// ---- 本地版本号（与 UI 标题栏 "v2.5" 一致；发布新版时同步修改）----
-static const char kLocalVersion[] = "2.5";
+// ---- 本地版本号（与 UI 标题栏一致；发新版只改 types.h 的 APP_VERSION）----
+static const char* kLocalVersion = APP_VERSION;
 
 // ---- 服务器接口路径（域名+端口见 servercfg.h）----
 static const wchar_t kPathVersionLatest[] = L"/version/latest";
