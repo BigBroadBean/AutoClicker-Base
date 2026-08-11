@@ -14,6 +14,15 @@ static void Check(const char* a, const char* b, int expect)
            ok, a, b, r, expect);
 }
 
+static void CheckNorm(const char* in, const char* expect)
+{
+    std::string r = NormalizeVersionDisplay(in);
+    const char* ok = (r == expect) ? "PASS" : "FAIL";
+    if (r != expect) g_fail++;
+    printf("[%s] NormalizeVersionDisplay(\"%s\") = \"%s\" (expect \"%s\")\n",
+           ok, in, r.c_str(), expect);
+}
+
 int main()
 {
     printf("=== 带 v 前缀 ===\n");
@@ -53,6 +62,13 @@ int main()
     Check("2.5", "2.6", -1);        // 服务器新 → 提示
     Check("2.5", "v2.6.0", -1);
     Check("2.5", "2.10", -1);
+
+    printf("=== 显示规范化（NormalizeVersionDisplay）===\n");
+    CheckNorm("v2.6", "2.6");
+    CheckNorm("V2.6.0", "2.6.0");
+    CheckNorm(" 2.5 ", "2.5");
+    CheckNorm("2.6", "2.6");
+    CheckNorm("", "");
 
     printf("\n%s (%d failures)\n", g_fail ? "FAILED" : "ALL PASSED", g_fail);
     return g_fail ? 1 : 0;

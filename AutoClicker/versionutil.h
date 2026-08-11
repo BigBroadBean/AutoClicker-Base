@@ -51,6 +51,19 @@ inline int CompareVersions(const std::string& a, const std::string& b)
     }
 }
 
+// ---- 显示用版本号规范化 ----
+// 去掉首尾空白与 v/V 前缀（比较用原串，显示用这个）:
+//   "v2.6" -> "2.6"，"V2.6.0" -> "2.6.0"，" 2.5 " -> "2.5"
+inline std::string NormalizeVersionDisplay(const std::string& s)
+{
+    size_t b = s.find_first_not_of(" \t\r\n");
+    if (b == std::string::npos) return "";
+    size_t e = s.find_last_not_of(" \t\r\n");
+    std::string v = s.substr(b, e - b + 1);
+    if (!v.empty() && (v[0] == 'v' || v[0] == 'V')) v.erase(0, 1);
+    return v;
+}
+
 // ---- JSON 字符串提取 ----
 // 从 JSON 中提取 "key": "value" 的字符串值。
 // 处理 \n \r \t \" \\ 转义；\uXXXX 不处理（服务器输出原始 UTF-8，内容受控）。

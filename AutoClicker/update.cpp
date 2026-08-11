@@ -99,10 +99,12 @@ void StartVersionCheck()
         if (HttpGetText(kServerHost, kServerPort, kPathContentLatest, &cjson, nullptr))
             GetJsonString(cjson, "update_content", content);
 
-        // 4) 弹窗：最新版本号 + 更新内容
-        std::wstring msg = L"发现新版本 v" + Utf8ToWide(remote) + L"！\n\n";
-        msg += L"当前版本：v" + Utf8ToWide(kLocalVersion) + L"\n";
-        msg += L"最新版本：v" + Utf8ToWide(remote) + L"\n";
+        // 4) 弹窗：最新版本号 + 更新内容（版本号显示前规范化，避免双 v）
+        std::wstring remoteW = Utf8ToWide(NormalizeVersionDisplay(remote));
+        std::wstring localW = Utf8ToWide(NormalizeVersionDisplay(kLocalVersion));
+        std::wstring msg = L"发现新版本 v" + remoteW + L"！\n\n";
+        msg += L"当前版本：v" + localW + L"\n";
+        msg += L"最新版本：v" + remoteW + L"\n";
         if (!content.empty())
             msg += L"\n更新内容：\n" + Utf8ToWide(content);
         else
