@@ -516,4 +516,4 @@ msbuild AutoClicker.sln /p:Configuration=Release-Base /p:Platform=x64     # Base
 - 目标实体白名单/黑名单（DLL 的 `targetName` 已上报，只差消费端筛选）
 
 > ✅ 已完成（V64）：映射自动生成——`gen_maps.py` 从 mappings-extracted（54 版本）
-> 生成 171 张 JniMap，DLL 覆盖 1.8.8 → 1.21.11，见上游项目文档。
+> 生成 171 张 JniMap，DLL 覆盖 1.8.8 → 1.21.11 几乎全版本，见上游项目文档。
