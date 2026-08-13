@@ -53,3 +53,6 @@ Desktop.ini
 
 ## MCCombatStatusJni.dll (project file, tracked)
 !/MCCombatStatusJni.dll
+
+## 会话规划临时目录
+.zcode/
