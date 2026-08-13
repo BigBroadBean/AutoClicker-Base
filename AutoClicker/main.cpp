@@ -1723,7 +1723,7 @@ static void RenderContent()
                 static const wchar_t* tip[] = {
                     L"开启后仅左键在准星对准可攻击生物时连点",
                     L"右键不受影响；未开启时左右键照常",
-                    L"支持版本：1.8.9 / 1.12.2 / 1.20.1（含 Forge）",
+                    L"支持版本：1.8.8 ~ 1.21.11 全版本（原版/Forge/Fabric/NeoForge）",
                     L"网易中国版（盒子）受反作弊保护，无法使用"
                 };
                 RenderTip(l, L.btnCanAtk, tip, 4);
@@ -1757,7 +1757,7 @@ static void RenderContent()
                 static const wchar_t* tip[] = {
                     L"开启后只有左手持有放置物（方块）时",
                     L"右键才会连点，左键照常",
-                    L"支持版本：1.8.9 / 1.12.2 / 1.20.1（含 Forge）"
+                    L"支持版本：1.8.8 ~ 1.21.11 全版本（原版/Forge/Fabric/NeoForge）"
                 };
                 RenderTip(l, L.btnPlace, tip, 3);
             }

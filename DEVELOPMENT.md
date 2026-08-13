@@ -424,7 +424,7 @@ msbuild AutoClicker.sln /p:Configuration=Release-Base /p:Platform=x64     # Base
 
 ### 协议（已通过反汇编确认）
 
-- `MCCombatStatusJni.dll`（MinGW x64 JNI）被注入后通过 `JNI_GetCreatedJavaVMs` 附加 JVM，反射查找 `Minecraft.hitResult`（新旧映射名兼容，`func_71410_x`/`m_91087_` 等），同时解析手持物品链（1.8.9/1.12.2 的 `ItemBlock`、1.20.1 的 `BlockItem`，可选解析——失败仅 canPlace 恒 0，不拖垮 canAttack）
+- `MCCombatStatusJni.dll`（MinGW x64 JNI）被注入后通过 `JNI_GetCreatedJavaVMs` 附加 JVM，反射查找 `Minecraft.hitResult`（新旧映射名兼容，`func_71410_x`/`m_91087_` 等），同时解析手持物品链（旧版 1.8.8~1.12.2 的 `ItemBlock`、新版 1.13+ 的 `BlockItem`，可选解析——失败仅 canPlace 恒 0，不拖垮 canAttack）
 - 判定结果写入共享内存 `Local\MCCombatStatus_<游戏PID>`，循环 `Sleep(5)` 后 `sendto` 到 `127.0.0.1:35785`，载荷 **2 字节**：
   - `byte0 = '0'`(0x30) 不可攻击 / `'1'`(0x31) 可攻击（与旧版 1 字节协议完全一致）
   - `byte1 = '0'`(0x30) 手持非放置物 / `'1'`(0x31) 手持放置物（V57+ 新增，兼容旧接收端）
