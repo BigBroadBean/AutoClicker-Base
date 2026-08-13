@@ -3,12 +3,15 @@
 #include "sound.h"
 #include "overlay.h"
 #include "canattack.h"
+#include "ui.h"
 
 #include <Windows.h>
 #include <thread>
 #include <chrono>
 #include <string>
+#include <cstring>
 #include <atomic>
+#include <cmath>
 
 #pragma comment(lib, "winmm.lib")
 
@@ -42,9 +45,15 @@ std::atomic<long long> g_debounceUntil{ 0 };
 bool isScrollClickActive = false;
 int scrollClickButton = 0;
 
+int humanizeMode = 0;      // 0=均匀 1=双击连招 2=呼吸波动 3=疲劳递减
+int humanizeLevel = 3;     // 1..5
+int vk_profile_key = 0;    // 方案切换热键 (默认无)
+int g_accentIdx = 0;       // 强调色 (types.h)
+
 bool autoStopEnabled = false;
 int autoStopSeconds = 30;
 bool topmost = false;
+bool soundEnabled = true;   // 提示音总开关 (默认开, 兼容旧配置)
 std::atomic<long long> g_clickCount{ 0 };
 
 // ---- realtime CPS: ring buffer of click timestamps (ns) ----
@@ -119,6 +128,20 @@ void udmWindow()
 
 static HHOOK g_hMouseHook = nullptr;
 
+// shared dynamically-resolved PostMessageA for the mouse-hook click paths
+// (multi-click & scroll-to-click). Dynamic GetProcAddress resolution keeps
+// the call out of the IAT, immune to IME inline/IAT hooks (see DEVELOPMENT.md
+// §7.1). Resolved once when the hook thread starts; plain pointer is safe:
+// every hook consumer is created after that write.
+using PfnPostMessageA = int (WINAPI*)(HWND, UINT, WPARAM, LPARAM);
+static PfnPostMessageA g_PostMsgA = nullptr;
+
+// synthetic clicks need a realistic press duration: a 0-length DOWN+UP pair
+// (posted back-to-back) is dropped by some games / anti-cheats. The main
+// clicker naturally holds ~25ms per click (DOWN at t, UP at t+interval);
+// the hook paths emulate that with this fixed hold.
+static constexpr int kClickHoldMs = 10;
+
 static LRESULT CALLBACK MultiClickHookProc(int nCode, WPARAM wParam, LPARAM lParam)
 {
     if (nCode < 0)
@@ -149,11 +172,10 @@ static LRESULT CALLBACK MultiClickHookProc(int nCode, WPARAM wParam, LPARAM lPar
                 UINT msgUp = isLeft ? WM_LBUTTONUP : WM_RBUTTONUP;
                 WPARAM wpDown = isLeft ? MK_LBUTTON : MK_RBUTTON;
                 std::thread([target, msgDown, msgUp, wpDown, lp]() {
-                    typedef int(WINAPI* pPostMsg)(HWND, UINT, WPARAM, LPARAM);
-                    pPostMsg PostMsgA = (pPostMsg)GetProcAddress(LoadLibraryA("User32.dll"), "PostMessageA");
-                    if (!PostMsgA) return;
-                    PostMsgA(target, msgDown, wpDown, lp);
-                    PostMsgA(target, msgUp, 0, lp);
+                    if (!g_PostMsgA) return;
+                    g_PostMsgA(target, msgDown, wpDown, lp);
+                    std::this_thread::sleep_for(std::chrono::milliseconds(kClickHoldMs));
+                    g_PostMsgA(target, msgUp, 0, lp);
                 }).detach();
             }
         }
@@ -188,14 +210,12 @@ static LRESULT CALLBACK MultiClickHookProc(int nCode, WPARAM wParam, LPARAM lPar
     LPARAM lp = MAKELPARAM(pt.x, pt.y);
 
     std::thread([target, count, delay, msgDown, msgUp, wpDown, lp]() {
-        typedef int(WINAPI * pPostMsg)(HWND, UINT, WPARAM, LPARAM);
-        pPostMsg PostMsgA = (pPostMsg)GetProcAddress(LoadLibraryA("User32.dll"), "PostMessageA");
-        if (!PostMsgA) return;
-
+        if (!g_PostMsgA) return;
         for (int i = 0; i < count; i++) {
             std::this_thread::sleep_for(std::chrono::milliseconds(delay));
-            PostMsgA(target, msgDown, wpDown, lp);
-            PostMsgA(target, msgUp, 0, lp);
+            g_PostMsgA(target, msgDown, wpDown, lp);
+            std::this_thread::sleep_for(std::chrono::milliseconds(kClickHoldMs));
+            g_PostMsgA(target, msgUp, 0, lp);
         }
     }).detach();
 
@@ -205,6 +225,10 @@ static LRESULT CALLBACK MultiClickHookProc(int nCode, WPARAM wParam, LPARAM lPar
 void StartMultiClickHook()
 {
     std::thread([]() {
+        // resolve once, before the hook can deliver any event
+        HMODULE u32 = GetModuleHandleA("User32.dll");
+        g_PostMsgA = u32 ? (PfnPostMessageA)GetProcAddress(u32, "PostMessageA") : nullptr;
+
         g_hMouseHook = SetWindowsHookExW(WH_MOUSE_LL, MultiClickHookProc,
                                          GetModuleHandleW(nullptr), 0);
         if (!g_hMouseHook) return;
@@ -218,6 +242,16 @@ void StartMultiClickHook()
         UnhookWindowsHookEx(g_hMouseHook);
         g_hMouseHook = nullptr;
     }).detach();
+}
+
+// our own window class ("ACgdi", registered ANSI in main.cpp). The mouse
+// hook already skips it; the main clicker must too, otherwise clicking the
+// UI while the clicker is active feeds synthetic clicks back into our own
+// controls (the window is foreground while the user configures it).
+static bool IsOwnWindow(HWND h)
+{
+    char cls[64] = {};
+    return h && GetClassNameA(h, cls, 64) && strcmp(cls, "ACgdi") == 0;
 }
 
 // high-precision wait: coarse Sleep + fine spin for sub-millisecond accuracy.
@@ -256,10 +290,15 @@ void ClickerThreadProc()
         return (unsigned)(rng >> 32);
     };
 
-    auto randDelay = [&](int baseMs, int baseCps10) -> int {
-        if (!randomCpsEnabled) return baseMs;
-        int offset = (int)(rnd() % (unsigned)(randomCpsRange * 20 + 1)) - randomCpsRange * 10;
-        int cps10 = baseCps10 + offset;
+    // 拟人化节奏: 在基础 CPS 上叠加变速因子, 再叠加随机抖动。
+    // humanFactor = 1 时与旧版行为完全一致 (均匀 + 随机波动)。
+    // factor 语义: <1 加速, >1 减速 (delay = 500 / (cps10 / factor))
+    auto humanDelay = [&](int baseMs, int baseCps10, double humanFactor) -> int {
+        double cps = (double)baseCps10 / humanFactor;
+        int jitter = 0;
+        if (randomCpsEnabled)
+            jitter = (int)(rnd() % (unsigned)(randomCpsRange * 20 + 1)) - randomCpsRange * 10;
+        int cps10 = (int)cps + jitter;
         if (cps10 < CPS_MIN10) cps10 = CPS_MIN10;
         if (cps10 > cpsMax * 10) cps10 = cpsMax * 10;
         return cpsToMs(cps10);
@@ -273,6 +312,13 @@ void ClickerThreadProc()
     bool prevMulti = false;
     bool prevStart = false;
 
+    // 拟人化节奏会话状态: 每次按住鼠标 (或 keep 模式开启) 视为一个会话,
+    // 双击/呼吸/疲劳模式按会话内时间与击次计算变速因子
+    bool prevHeldL = false, prevHeldR = false;
+    long long clickIdxL = 0, clickIdxR = 0;
+    auto heldStartL = steady_clock::now();
+    auto heldStartR = steady_clock::now();
+
     // non-blocking click state
     enum ClickState { CS_IDLE, CS_WAIT_UP, CS_WAIT_DOWN };
     ClickState leftSt  = CS_IDLE;
@@ -281,6 +327,27 @@ void ClickerThreadProc()
     auto nextRightTime = steady_clock::now();
     auto nextScan      = steady_clock::now();
     POINT lastPt = {};
+
+    // release helpers: whenever the state machine drops out of CS_WAIT_UP
+    // (stop / toggle / mode switch / gate flip), the target window MUST
+    // receive the matching button-up, otherwise the game sees a stuck
+    // button (worst in keep mode: no physical release ever comes).
+    auto releaseLeft = [&]() {
+        if (leftSt == CS_WAIT_UP && mhwnd && !IsOwnWindow(mhwnd)) {
+            GetCursorPos(&lastPt);
+            ScreenToClient(mhwnd, &lastPt);
+            MyPostMessageA(mhwnd, WM_LBUTTONUP, 0, MAKELPARAM(lastPt.x, lastPt.y));
+        }
+        leftSt = CS_IDLE;
+    };
+    auto releaseRight = [&]() {
+        if (rightSt == CS_WAIT_UP && mhwnd && !IsOwnWindow(mhwnd)) {
+            GetCursorPos(&lastPt);
+            ScreenToClient(mhwnd, &lastPt);
+            MyPostMessageA(mhwnd, WM_RBUTTONUP, 0, MAKELPARAM(lastPt.x, lastPt.y));
+        }
+        rightSt = CS_IDLE;
+    };
 
     for (;;) {
         auto now = steady_clock::now();
@@ -337,6 +404,7 @@ void ClickerThreadProc()
                         std::thread([]() {
                             while (GetAsyncKeyState(vk_canattack_key) & 0x8000) Sleep(1);
                             canAttackOnlyClick = !canAttackOnlyClick;
+                            NotifyGateToggled();   // wake shm poller / UDP monitor / injector
                             PlayCanAttackSound(canAttackOnlyClick);
                             ShowCanAttackToast(canAttackOnlyClick);
                             SaveConfig();
@@ -356,6 +424,7 @@ void ClickerThreadProc()
                         std::thread([]() {
                             while (GetAsyncKeyState(vk_place_key) & 0x8000) Sleep(1);
                             placeOnlyRightClick = !placeOnlyRightClick;
+                            NotifyGateToggled();   // wake shm poller / UDP monitor / injector
                             PlayCanPlaceSound(placeOnlyRightClick);
                             ShowCanPlaceToast(placeOnlyRightClick);
                             SaveConfig();
@@ -398,6 +467,29 @@ void ClickerThreadProc()
                         }).detach();
                     }
                     prevScrollLR = curScrollLR;
+                }
+
+                // profile cycle hotkey - edge detect + async wait-release.
+                // 切换只在连点线程做数据面 (SwitchProfile), 主题/置顶/Toast 等
+                // UI 副作用通过 PostMessage 交给主窗口线程 (WM_APP_PROFILE)。
+                {
+                    static std::atomic<bool> busyProf{ false };
+                    static bool prevProf = false;
+                    bool curProf = vk_profile_key && (GetAsyncKeyState(vk_profile_key) & 0x8000) != 0;
+                    if (curProf && !prevProf && !busyProf.exchange(true)) {
+                        std::thread([]() {
+                            while (GetAsyncKeyState(vk_profile_key) & 0x8000) Sleep(1);
+                            int next = (g_activeProfile % PROFILE_COUNT) + 1;
+                            if (SwitchProfile(next)) {
+                                NotifyGateToggled();   // 方案可能携带门控开关变化
+                                PlayScrollLRSound();
+                                if (g_uiHwnd)
+                                    PostMessageW(g_uiHwnd, WM_APP_PROFILE, (WPARAM)next, 0);
+                            }
+                            busyProf = false;
+                        }).detach();
+                    }
+                    prevProf = curProf;
                 }
 
                 // +/- keys adjust multi-click multiplier
@@ -444,10 +536,12 @@ void ClickerThreadProc()
         }
 
         // ---- click state machine (sub-millisecond timing) ----
-        if (isMultiActive) { leftSt = CS_IDLE; rightSt = CS_IDLE; }
+        // multi-click mode takes over the physical mouse: release any
+        // in-flight synthetic press so the game never gets a stuck button
+        if (isMultiActive) { releaseLeft(); releaseRight(); }
 
         // can-attack gate: when enabled, only the LEFT button clicks while the
-        // targeted creature is attackable (live 0/1 fed by the UDP monitor).
+        // targeted creature is attackable (live 0/1 fed by the shm/UDP monitor).
         // can-place gate: when enabled, only the RIGHT button clicks while the
         // held item is a placeable (ItemBlock/BlockItem). Both are independent.
         bool canAtkGate = !canAttackOnlyClick ||
@@ -457,21 +551,13 @@ void ClickerThreadProc()
 
         // gate flipped off mid-click: release the held mouse button immediately
         // so the game never gets stuck with a pressed mouse button
-        if (!canAtkGate && mhwnd && leftSt == CS_WAIT_UP) {
-            GetCursorPos(&lastPt);
-            ScreenToClient(mhwnd, &lastPt);
-            MyPostMessageA(mhwnd, WM_LBUTTONUP, 0, MAKELPARAM(lastPt.x, lastPt.y));
-            leftSt = CS_IDLE;
-        }
-        if (!canPlaceGate && mhwnd && rightSt == CS_WAIT_UP) {
-            GetCursorPos(&lastPt);
-            ScreenToClient(mhwnd, &lastPt);
-            MyPostMessageA(mhwnd, WM_RBUTTONUP, 0, MAKELPARAM(lastPt.x, lastPt.y));
-            rightSt = CS_IDLE;
-        }
+        if (!canAtkGate) releaseLeft();
+        if (!canPlaceGate) releaseRight();
 
-        bool leftActive = isstart && leftenabled && mhwnd != nullptr && !isMultiActive && canAtkGate;
-        bool rightActive = isstart && rightenabled && mhwnd != nullptr && !isMultiActive && canPlaceGate;
+        // never target our own window (see IsOwnWindow above)
+        bool targetOk = mhwnd && !IsOwnWindow(mhwnd);
+        bool leftActive = isstart && leftenabled && targetOk && !isMultiActive && canAtkGate;
+        bool rightActive = isstart && rightenabled && targetOk && !isMultiActive && canPlaceGate;
 
         bool leftHeld = leftActive && ((GetAsyncKeyState(VK_LBUTTON) & 0x8000) || keepClicke);
         if (leftHeld) {
@@ -487,11 +573,35 @@ void ClickerThreadProc()
                     MyPostMessageA(mhwnd, WM_LBUTTONUP, 0, lp);
                     leftSt = CS_IDLE;
                 }
-                int del = randDelay(leftms, cpsLeft10);
+                if (!prevHeldL) { heldStartL = now; clickIdxL = 0; }   // 新会话
+                double t  = duration<double>(now - heldStartL).count();
+                double amp = humanizeLevel / 5.0;
+                double f = 1.0;
+                switch (humanizeMode) {
+                case 1:   // 双击连招: 短促双击 + 组间停顿
+                    f = (clickIdxL % 2 == 0) ? 1.0 - 0.28 * amp : 1.0 + 0.38 * amp;
+                    break;
+                case 2:   // 呼吸波动: 正弦曲线起伏 (~3.5s 周期)
+                    f = 1.0 + 0.24 * amp * std::sin(t * 6.28318530718 / 3.5);
+                    break;
+                case 3:   // 疲劳递减: 按住越久越慢, 渐近 -30%
+                    f = 1.0 + 0.30 * amp * (1.0 - std::exp(-t / 8.0));
+                    break;
+                default:  // 均匀
+                    f = 1.0;
+                    break;
+                }
+                if (f < 0.5) f = 0.5;
+                if (f > 1.5) f = 1.5;
+                clickIdxL++;
+                int del = humanDelay(leftms, cpsLeft10, f);
                 nextLeftTime = now + milliseconds(del);
             }
+            prevHeldL = true;
         } else {
-            leftSt = CS_IDLE;
+            // clicker stopped / button disabled mid-press: send the pending UP
+            releaseLeft();
+            prevHeldL = false;
         }
 
         bool rightHeld = rightActive && ((GetAsyncKeyState(VK_RBUTTON) & 0x8000) || keepClicke);
@@ -508,11 +618,35 @@ void ClickerThreadProc()
                     MyPostMessageA(mhwnd, WM_RBUTTONUP, 0, lp);
                     rightSt = CS_IDLE;
                 }
-                int del = randDelay(rightms, cpsRight10);
+                if (!prevHeldR) { heldStartR = now; clickIdxR = 0; }   // 新会话
+                double t  = duration<double>(now - heldStartR).count();
+                double amp = humanizeLevel / 5.0;
+                double f = 1.0;
+                switch (humanizeMode) {
+                case 1:
+                    f = (clickIdxR % 2 == 0) ? 1.0 - 0.28 * amp : 1.0 + 0.38 * amp;
+                    break;
+                case 2:
+                    f = 1.0 + 0.24 * amp * std::sin(t * 6.28318530718 / 3.5);
+                    break;
+                case 3:
+                    f = 1.0 + 0.30 * amp * (1.0 - std::exp(-t / 8.0));
+                    break;
+                default:
+                    f = 1.0;
+                    break;
+                }
+                if (f < 0.5) f = 0.5;
+                if (f > 1.5) f = 1.5;
+                clickIdxR++;
+                int del = humanDelay(rightms, cpsRight10, f);
                 nextRightTime = now + milliseconds(del);
             }
+            prevHeldR = true;
         } else {
-            rightSt = CS_IDLE;
+            // clicker stopped / button disabled mid-press: send the pending UP
+            releaseRight();
+            prevHeldR = false;
         }
 
         // ---- precise wait until the next event ----

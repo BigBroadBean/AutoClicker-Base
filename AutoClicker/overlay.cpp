@@ -1,4 +1,5 @@
 #include "overlay.h"
+#include "glass.h"
 #include <Windows.h>
 #include <string>
 #include <thread>
@@ -7,152 +8,51 @@
 
 constexpr int TOAST_W = 240;
 constexpr int TOAST_H = 64;
-constexpr int TOAST_MARGIN = 6;      // room for the soft shadow
-constexpr int TOAST_STAY_MS = 1000;
+constexpr int TOAST_MARGIN = 8;      // room for the soft shadow
+constexpr int TOAST_STAY_MS = 1100;
 
 static std::atomic<int> g_toastGen{ 0 };
 
-static COLORREF LerpC(COLORREF a, COLORREF b, float t) {
-    return RGB((int)(GetRValue(a) + (GetRValue(b) - GetRValue(a)) * t),
-               (int)(GetGValue(a) + (GetGValue(b) - GetGValue(a)) * t),
-               (int)(GetBValue(a) + (GetBValue(b) - GetBValue(a)) * t));
-}
-
-// 32bpp top-down DIB (transparent initially, alpha set per pixel after drawing)
-static HBITMAP CreateAlphaSurface(int w, int h, void** bits)
+// 玻璃态 Toast 体: 阴影 + 玻璃底 + 顶部高光 + 发丝描边 + 强调色条
+static void DrawToast(GLayer& l, const wchar_t* title, const wchar_t* status, COLORREF statusColor)
 {
-    BITMAPINFO bmi = {};
-    bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    bmi.bmiHeader.biWidth = w;
-    bmi.bmiHeader.biHeight = -h;   // top-down
-    bmi.bmiHeader.biPlanes = 1;
-    bmi.bmiHeader.biBitCount = 32;
-    bmi.bmiHeader.biCompression = BI_RGB;
-    return CreateDIBSection(nullptr, &bmi, DIB_RGB_COLORS, bits, nullptr, 0);
+    RECT body = { TOAST_MARGIN, TOAST_MARGIN, TOAST_W + TOAST_MARGIN, TOAST_H + TOAST_MARGIN };
+    GLShadow(l, body, 12, 6, RGB(0, 0, 0), 66);
+    GLFillRound(l, body, 12, PANEL(), (BYTE)(g_theme == Theme::Dark ? 208 : 218));
+    GLFillV(l, body, 12, SHEEN(), (BYTE)(g_theme == Theme::Dark ? 10 : 28), SHEEN(), 0);
+    GLRing(l, body, 12, 1, HAIRLINE(), (BYTE)(g_theme == Theme::Dark ? 42 : 62));
+    // 左侧强调色条
+    RECT bar = { body.left + 8, body.top + 12, body.left + 12, body.bottom - 12 };
+    GLFillRound(l, bar, 2, statusColor, 255);
+
+    HDC dc = l.dc;
+    SetBkMode(dc, TRANSPARENT);
+    HFONT hTitle = CreateFontW(20, 0, 0, 0, FW_SEMIBOLD, 0, 0, 0, DEFAULT_CHARSET,
+                               0, 0, ANTIALIASED_QUALITY, 0, g_uiFontName);
+    if (!hTitle) hTitle = CreateFontW(20, 0, 0, 0, FW_SEMIBOLD, 0, 0, 0, DEFAULT_CHARSET,
+                                      0, 0, ANTIALIASED_QUALITY, 0, L"Segoe UI");
+    SelectObject(dc, hTitle);
+    SetTextColor(dc, TXT());
+    RECT rt = { body.left + 22, body.top + 6, body.right - 10, body.top + 30 };
+    DrawTextW(dc, title, -1, &rt, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    GLLiftAlphaRect(l, rt);
+    DeleteObject(hTitle);
+
+    HFONT hStatus = CreateFontW(22, 0, 0, 0, FW_BOLD, 0, 0, 0, DEFAULT_CHARSET,
+                                0, 0, ANTIALIASED_QUALITY, 0, g_uiFontName);
+    if (!hStatus) hStatus = CreateFontW(22, 0, 0, 0, FW_BOLD, 0, 0, 0, DEFAULT_CHARSET,
+                                        0, 0, ANTIALIASED_QUALITY, 0, L"Segoe UI");
+    SelectObject(dc, hStatus);
+    SetTextColor(dc, statusColor);
+    RECT rs = { body.left + 22, body.top + 28, body.right - 10, body.bottom - 6 };
+    DrawTextW(dc, status, -1, &rs, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    GLLiftAlphaRect(l, rs);
+    DeleteObject(hStatus);
 }
 
-static void ApplyAlpha(void* bits, int w, int h)
-{
-    unsigned char* p = (unsigned char*)bits;
-    for (int i = 0; i < w * h; i++) {
-        if (p[0] || p[1] || p[2]) p[3] = 255;
-        p += 4;
-    }
-}
-
-// Neumorphic toast body (theme-aware)
-static void DrawToast(HDC memDC, const wchar_t* title, const wchar_t* status, COLORREF statusColor)
-{
-    int w = TOAST_W, h = TOAST_H;
-    COLORREF bg = CARD();
-
-    // soft shadow (bottom-right)
-    for (int i = TOAST_MARGIN; i >= 1; --i) {
-        RECT rr = { i, i, w + i, h + i };
-        HBRUSH hb = CreateSolidBrush(LerpC(bg, SHADOW_DARK(), (float)i / (TOAST_MARGIN + 1)));
-        HGDIOBJ ob = SelectObject(memDC, hb);
-        SelectObject(memDC, GetStockObject(NULL_PEN));
-        RoundRect(memDC, rr.left, rr.top, rr.right, rr.bottom, 14, 14);
-        SelectObject(memDC, ob);
-        DeleteObject(hb);
-    }
-    // soft highlight (top-left)
-    for (int i = 2; i >= 1; --i) {
-        RECT rr = { -i, -i, w - i, h - i };
-        HBRUSH hb = CreateSolidBrush(LerpC(bg, SHADOW_LIGHT(), i / 3.0f));
-        HGDIOBJ ob = SelectObject(memDC, hb);
-        SelectObject(memDC, GetStockObject(NULL_PEN));
-        RoundRect(memDC, rr.left, rr.top, rr.right, rr.bottom, 14, 14);
-        SelectObject(memDC, ob);
-        DeleteObject(hb);
-    }
-    // body
-    {
-        HBRUSH hb = CreateSolidBrush(bg);
-        HGDIOBJ ob = SelectObject(memDC, hb);
-        SelectObject(memDC, GetStockObject(NULL_PEN));
-        RoundRect(memDC, 0, 0, w, h, 14, 14);
-        SelectObject(memDC, ob);
-        DeleteObject(hb);
-    }
-    // accent border
-    {
-        HPEN hp = CreatePen(PS_SOLID, 1, ACCENT());
-        SelectObject(memDC, hp);
-        SelectObject(memDC, GetStockObject(NULL_BRUSH));
-        RoundRect(memDC, 1, 1, w - 1, h - 1, 13, 13);
-        DeleteObject(hp);
-    }
-
-    SetBkMode(memDC, TRANSPARENT);
-
-    HFONT hFont = CreateFontW(22, 0, 0, 0, FW_SEMIBOLD, 0, 0, 0, 0, 0, 0,
-                              CLEARTYPE_QUALITY, 0, g_uiFontName);
-    if (!hFont) hFont = CreateFontW(22, 0, 0, 0, FW_SEMIBOLD, 0, 0, 0, 0, 0, 0,
-                                    CLEARTYPE_QUALITY, 0, L"Segoe UI");
-    SelectObject(memDC, hFont);
-    SetTextColor(memDC, TXT());
-    RECT rt = { 0, 4, w, 28 };
-    DrawTextW(memDC, title, -1, &rt, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-    DeleteObject(hFont);
-
-    hFont = CreateFontW(26, 0, 0, 0, FW_BOLD, 0, 0, 0, 0, 0, 0,
-                        CLEARTYPE_QUALITY, 0, g_uiFontName);
-    if (!hFont) hFont = CreateFontW(26, 0, 0, 0, FW_BOLD, 0, 0, 0, 0, 0, 0,
-                                    CLEARTYPE_QUALITY, 0, L"Segoe UI");
-    SelectObject(memDC, hFont);
-    SetTextColor(memDC, statusColor);
-    RECT rs = { 0, 26, w, 60 };
-    DrawTextW(memDC, status, -1, &rs, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-    DeleteObject(hFont);
-}
-
-static void DrawAndFade(HWND hToast, HDC screenDC, int x, int y,
-                        const wchar_t* title, const wchar_t* status, COLORREF statusColor,
-                        int gen)
-{
-    const int W = TOAST_W + TOAST_MARGIN * 2;
-    const int H = TOAST_H + TOAST_MARGIN * 2;
-
-    void* bits = nullptr;
-    HBITMAP hbm = CreateAlphaSurface(W, H, &bits);
-    HDC memDC = CreateCompatibleDC(nullptr);
-    HGDIOBJ oldBM = SelectObject(memDC, hbm);
-
-    auto Render = [&](BYTE alpha) {
-        memset(bits, 0, (size_t)W * H * 4);
-        DrawToast(memDC, title, status, statusColor);
-        ApplyAlpha(bits, W, H);
-        BLENDFUNCTION blend = { AC_SRC_OVER, 0, alpha, AC_SRC_ALPHA };
-        POINT ptDst = { x, y };
-        SIZE sz = { W, H };
-        POINT ptSrc = { 0, 0 };
-        UpdateLayeredWindow(hToast, screenDC, &ptDst, &sz, memDC, &ptSrc, 0, &blend, ULW_ALPHA);
-    };
-
-    // fade in
-    for (int step = 0; step <= 5; ++step) {
-        if (g_toastGen != gen) break;
-        Render((BYTE)(51 * step));
-        std::this_thread::sleep_for(std::chrono::milliseconds(16));
-    }
-    if (g_toastGen != gen) goto cleanup;
-    std::this_thread::sleep_for(std::chrono::milliseconds(TOAST_STAY_MS));
-    if (g_toastGen != gen) goto cleanup;
-    // fade out
-    for (int step = 20; step >= 0; --step) {
-        if (g_toastGen != gen) break;
-        Render((BYTE)(255 * step / 20));
-        std::this_thread::sleep_for(std::chrono::milliseconds(30));
-    }
-
-cleanup:
-    SelectObject(memDC, oldBM);
-    DeleteObject(hbm);
-    DeleteDC(memDC);
-}
-
-static void ToastThreadProc(const wchar_t* title, const wchar_t* status, COLORREF statusColor,
+// 线程入口按值接收 wstring: std::thread 构造时同步深拷贝,
+// 调用方的临时字符串可以先安全销毁 (避免悬垂指针)
+static void ToastThreadProc(std::wstring title, std::wstring status, COLORREF statusColor,
                             int gen)
 {
     const int W = TOAST_W + TOAST_MARGIN * 2;
@@ -167,21 +67,53 @@ static void ToastThreadProc(const wchar_t* title, const wchar_t* status, COLORRE
     HWND hToast = CreateWindowExA(
         WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT,
         "Static", "", WS_POPUP,
-        0, 0, W, H,
+        x, y, W, H,
         nullptr, nullptr, hInst, nullptr);
+    if (!hToast) return;
+
+    GLayer surf = GLCreate(W, H);
+    if (!surf.dc) {
+        DestroyWindow(hToast);
+        return;
+    }
+
+    auto Render = [&](BYTE alpha, int yy) {
+        GLClear(surf);
+        DrawToast(surf, title.c_str(), status.c_str(), statusColor);
+        HDC sd = GetDC(hToast);
+        if (!sd) return;
+        POINT pt = { x, yy };
+        SIZE sz = { W, H };
+        POINT sp = { 0, 0 };
+        BLENDFUNCTION blend = { AC_SRC_OVER, 0, alpha, AC_SRC_ALPHA };
+        UpdateLayeredWindow(hToast, sd, &pt, &sz, surf.dc, &sp, 0, &blend, ULW_ALPHA);
+        ReleaseDC(hToast, sd);
+    };
 
     ShowWindow(hToast, SW_SHOW);
-    UpdateWindow(hToast);
+    // 淡入 + 从下方 20px 滑入
+    for (int step = 0; step <= 5; ++step) {
+        if (g_toastGen != gen) break;
+        int slide = (int)(20.0f * (1.0f - step / 5.0f) + 0.5f);
+        Render((BYTE)(51 * step), y + slide);
+        std::this_thread::sleep_for(std::chrono::milliseconds(16));
+    }
+    if (g_toastGen == gen)
+        std::this_thread::sleep_for(std::chrono::milliseconds(TOAST_STAY_MS));
+    // 淡出
+    for (int step = 20; step >= 0; --step) {
+        if (g_toastGen != gen) break;
+        Render((BYTE)(255 * step / 20), y);
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+    }
 
-    HDC screenDC = GetDC(nullptr);
-    DrawAndFade(hToast, screenDC, x, y, title, status, statusColor, gen);
-    ReleaseDC(nullptr, screenDC);
-
+    GLFree(surf);
     DestroyWindow(hToast);
 }
 
 void ShowToast(const wchar_t* title, const wchar_t* status, COLORREF statusColor)
 {
     int gen = ++g_toastGen;
-    std::thread(ToastThreadProc, title, status, statusColor, gen).detach();
+    std::thread(ToastThreadProc, std::wstring(title), std::wstring(status),
+                statusColor, gen).detach();
 }

@@ -15,12 +15,19 @@
 //           '0' (0x30) = not a placeable / empty hand
 // (byte0 matches the legacy 1-byte protocol, so old receivers still work.)
 //
-// This module owns two background threads:
-//   1. UDP monitor   : binds 127.0.0.1:35785, reads the live 2-byte status
-//                      into g_canAttack / g_canPlace, async loop sleeping 5ms.
-//   2. Injector      : periodically finds Minecraft Java processes that do NOT
-//                      have the DLL loaded yet and injects them (LoadLibrary
-//                      remote thread), with anti-double-injection handling.
+// This module owns three background threads:
+//   1. Shared-memory poller (PRIMARY channel): reads the live status struct
+//      that the DLL publishes in "Local\MCCombatStatus_<pid>" every ~5ms.
+//      No port conflicts, no socket overhead. Runs for the whole app lifetime
+//      (5ms cadence, negligible CPU) so the dashboard/HUD can show live game
+//      state (目标实体/命中类型/游戏内) even while both gates are off.
+//   2. UDP monitor (fallback for old DLLs): binds 127.0.0.1:35785 and reads
+//      the same 2-byte datagrams. Lifecycle-gated: the port is only bound
+//      while a gate is on, so other apps can use 35785 meanwhile.
+//   3. Injector      : periodically finds Minecraft Java processes that do NOT
+//      have the DLL loaded yet and injects them (LoadLibrary remote thread),
+//      with anti-double-injection handling, failure backoff and log throttling.
+//      Parks on an event while both gates are off.
 
 // ---- feature state ----
 // atomic so the injector thread can reliably observe UI/hotkey toggles
@@ -37,12 +44,23 @@ extern std::atomic<int> g_canPlace;
 // GetTickCount64() of the last received packet; 0 = never received any.
 extern std::atomic<long long> g_canAttackLastMs;
 
-// true while UDP packets are arriving (game injected & running)
+// ---- live status from the shared-memory channel (HUD 用, 只读快照) ----
+// 与门控开关无关: 只要游戏里有我们的 DLL 在发布, 就持续更新。
+int  GetShmInGame();                       // 1=已进入游戏 0=否/未连接
+int  GetShmHitType();                      // 0=未命中 1=方块 2=实体
+void GetShmTargetName(char* out, size_t cap);   // 准星目标类名 (可空)
+
+// true while fresh status is arriving (game injected & running)
 bool CanAttackConnected();
 
 // true when MCCombatStatusJni.dll can be located next to the exe / in CWD
 bool CanAttackDllAvailable();
 
-// start both background threads (called once from WinMain)
+// start the background threads (called once from WinMain)
 void StartCanAttackMonitor();
+void StartCanAttackShmPoller();
 void StartInjectorThread();
+
+// wake the gate-driven threads after canAttackOnlyClick / placeOnlyRightClick
+// changes (call from ANY thread: UI toggles, hotkey toggles, config load)
+void NotifyGateToggled();
