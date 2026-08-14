@@ -1094,11 +1094,11 @@ static bool InstallProxyToDir(const char* nativesDir)
     return ok;
 }
 
-// 递归收集含 glfw.dll 的目录 (深度受限): 覆盖 bin\<hash>\ 与
-// versions\<*>\natives* 等所有网易客户端布局。
+// 递归收集含 glfw.dll 的目录 (深度受限; 只扫 bin/versions 子树, 覆盖
+// bin\<hash>\ 与 versions\<*>\natives* 等网易客户端布局; 跳过 libraries)。
 static void CollectGlfwDirs(const char* dir, int depth, std::vector<std::string>& out)
 {
-    if (depth > 4) return;
+    if (depth > 3) return;
     char pat[MAX_PATH];
     sprintf_s(pat, "%s\\*", dir);
     WIN32_FIND_DATAA fd;
@@ -1107,6 +1107,8 @@ static void CollectGlfwDirs(const char* dir, int depth, std::vector<std::string>
     do {
         if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
         if (fd.cFileName[0] == '.') continue;
+        if (depth == 0 && strcmp(fd.cFileName, "bin") != 0 &&
+            strcmp(fd.cFileName, "versions") != 0) continue;   // 只进 bin/versions
         char sub[MAX_PATH];
         sprintf_s(sub, "%s\\%s", dir, fd.cFileName);
         char probe[MAX_PATH];
@@ -1119,7 +1121,7 @@ static void CollectGlfwDirs(const char* dir, int depth, std::vector<std::string>
     FindClose(h);
 }
 
-static void ScanAndInstallAll(bool firstRun)
+static std::vector<std::string> ScanGlfwDirs()
 {
     const char* roots[] = {
         "D:\\MCLDownload",
@@ -1144,12 +1146,21 @@ static void ScanAndInstallAll(bool firstRun)
         if (GetFileAttributesA(mc) != INVALID_FILE_ATTRIBUTES)
             CollectGlfwDirs(mc, 0, found);
     }
+    return found;
+}
+
+static void ScanAndInstallAll(bool firstRun)
+{
+    std::vector<std::string> found = ScanGlfwDirs();
 
     int installed = 0;
     std::lock_guard<std::mutex> g(g_proxyMtx);
-    g_proxyDirs.clear();
     for (auto& d : found) {
-        g_proxyDirs.push_back(d);
+        // 目录列表只增不减: 启动器重建目录时旧的条目保留供看门狗继续盯
+        bool known = false;
+        for (auto& k : g_proxyDirs)
+            if (k == d) { known = true; break; }
+        if (!known) g_proxyDirs.push_back(d);
         if (InstallProxyToDir(d.c_str())) {
             LogInject("proxy: 已安装到 %s (游戏将自行加载, 无需注入)", d.c_str());
             installed++;
@@ -1169,11 +1180,20 @@ void StartProxyInstall()
 
     ScanAndInstallAll(true);
 
-    // 常驻看门狗: 每 1s 检查已发现目录, 启动器重提取/更新覆盖后立刻重装
+    // 常驻看门狗: 每 1s 全量重扫 —— 启动器每次启动会往 bin\<hash> 重新
+    // 提取原版 glfw, 检测到即重装 (游戏在 javaw 启动数秒后才加载 glfw,
+    // 1s 周期能抢在加载前重装完成; 文件被锁时下轮重试)。
     std::thread([]() {
         for (;;) {
             Sleep(1000);
+            std::vector<std::string> dirs = ScanGlfwDirs();
             std::lock_guard<std::mutex> g(g_proxyMtx);
+            for (auto& d : dirs) {
+                bool known = false;
+                for (auto& k : g_proxyDirs)
+                    if (k == d) { known = true; break; }
+                if (!known) g_proxyDirs.push_back(d);
+            }
             for (auto& d : g_proxyDirs) {
                 char probe[MAX_PATH];
                 sprintf_s(probe, "%s\\glfw.dll", d.c_str());
