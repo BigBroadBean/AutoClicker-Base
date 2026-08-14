@@ -73,6 +73,7 @@ static bool FileExists(const std::string& p)
 // 行 26 accentIdx       (0..3)
 // 行 27 vk_profile_key  (0..255)
 // 行 28 soundEnabled    (提示音总开关)
+// 行 29 cursorOnlyClick (光标门控: 仅光标不可见时连点)
 
 static bool NextInt(std::ifstream& f, int& v)
 {
@@ -145,6 +146,8 @@ static void LoadUnlocked(const std::string& path)
         vk_profile_key = v;
     if (NextInt(file, v))
         soundEnabled = (v != 0);
+    if (NextInt(file, v))
+        cursorOnlyClick = (v != 0);
 
     leftms = cpsToMs(cpsLeft10);
     rightms = cpsToMs(cpsRight10);
@@ -183,7 +186,8 @@ static void SaveUnlocked(const std::string& path)
          << humanizeLevel << "\n"
          << g_accentIdx << "\n"
          << vk_profile_key << "\n"
-         << (soundEnabled ? 1 : 0) << "\n";
+         << (soundEnabled ? 1 : 0) << "\n"
+         << (cursorOnlyClick ? 1 : 0) << "\n";
 }
 
 static void ReadActiveUnlocked()
@@ -300,6 +304,7 @@ static void ResetDefaultsUnlocked()
     g_accentIdx = 0;
     vk_profile_key = 0;
     soundEnabled = true;
+    cursorOnlyClick = false;
 }
 
 // ============================================================

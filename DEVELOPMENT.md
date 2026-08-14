@@ -207,7 +207,7 @@ std  = 0.073ms    （73 微秒，亚毫秒达成）
 ### 结构
 
 ```
-┌ 标题栏：AutoClicker v2.9 | 方案1 方案2 方案3 方案4 | 📌置顶 | ☀/☾主题 ┐
+┌ 标题栏：AutoClicker v2.9 | 方案1 方案2 方案3 方案4 | 🖱光标 | 📢 | 📌置顶 | ☀/☾主题 ┐
 ├ 侧边栏（5 图标按钮）：连点 | 多倍 | 滚轮 | 面板 | 高级
 │ 内容区：行1 = 两卡并排，行2 = 全宽卡
 │   · 连点页：左键卡 | 右键卡 / 快捷键+保持+仅能攻击时连点+仅手持放置物时右键连点卡
@@ -254,7 +254,7 @@ std  = 0.073ms    （73 微秒，亚毫秒达成）
 - 切换方案：`SwitchProfile(n)` 单锁内完成「旧槽落盘 → 改 active → 写 active.txt → 读新槽」；空白槽先 `ResetDefaultsUnlocked()` 恢复默认再载入。主题(DWM)/置顶/Toast 等 UI 副作用由调用方执行（UI 芯片路径直接在 `Click()` 内，热键路径经 `WM_APP_PROFILE` 消息转交 UI 线程）
 - **UI 全局状态**（不属于方案）：`ui.txt` = 4 个方案显示名（UTF-8，面板页重命名）；`window.txt` = 窗口位置/尺寸（4 行整数）
 - 方案文件格式：每行一个值，**顺序敏感**；新字段**追加在末尾** → 旧配置文件天然兼容
-- 当前字段顺序（28 行）：cpsLeft10, cpsRight10, cpsMax, randomCpsEnabled, randomCpsRange, vk_key, leftenabled, rightenabled, keepClicke, vk_multi_key, multiMul, multiDelayMs, vk_scroll_key, scrollClickButton, vk_scroll_lr_key, theme, autoStopEnabled, autoStopSeconds, topmost, canAttackOnlyClick, vk_canattack_key, placeOnlyRightClick, vk_place_key, humanizeMode, humanizeLevel, accentIdx, vk_profile_key, soundEnabled（提示音总开关，默认开；所有 `Play*Sound` 在 `sound.cpp` 统一门控，仅 `PlayToggleSound` 不受限）
+- 当前字段顺序（29 行）：cpsLeft10, cpsRight10, cpsMax, randomCpsEnabled, randomCpsRange, vk_key, leftenabled, rightenabled, keepClicke, vk_multi_key, multiMul, multiDelayMs, vk_scroll_key, scrollClickButton, vk_scroll_lr_key, theme, autoStopEnabled, autoStopSeconds, topmost, canAttackOnlyClick, vk_canattack_key, placeOnlyRightClick, vk_place_key, humanizeMode, humanizeLevel, accentIdx, vk_profile_key, soundEnabled（提示音总开关，默认开；所有 `Play*Sound` 在 `sound.cpp` 统一门控，仅 `PlayToggleSound` 不受限）, cursorOnlyClick（光标门控：仅系统光标不可见时连点）
 - 载入时对每个值做范围校验（防手改损坏）；跨线程写入由全局 `std::mutex` 串行化（§7.14）
 
 ---
@@ -403,6 +403,7 @@ msbuild AutoClicker.sln /p:Configuration=Release-Base /p:Platform=x64     # Base
 | 滚轮转点击 | 滚轮页 | 左/右选择 + 两个快捷键 |
 | 仅能攻击时连点 | 连点页 | 仅左键在可攻击时连点，含状态芯片 + 快捷键 |
 | 仅手持放置物时右键连点 | 连点页 | 仅右键在手握放置物时连点，含状态芯片 + 快捷键 |
+| 光标检测门控 | 标题栏 | 光标图标开关：仅光标不可见（游戏视角）时连点，背包/聊天/菜单自动暂停 |
 | 随机 CPS | 高级页 | ±N CPS 抖动，模拟真人 |
 | 拟人化节奏 | 高级页 | 均匀/双击连招/呼吸波动/疲劳递减 + 强度 1-5 |
 | CPS 上限 | 高级页 | 20-500，手动输入 |
@@ -438,7 +439,7 @@ msbuild AutoClicker.sln /p:Configuration=Release-Base /p:Platform=x64     # Base
   - **UDP 监听（旧版 DLL 兜底）**：绑定 `127.0.0.1:35785`（仅回环），`SO_RCVTIMEO=25ms`，每轮 `Sleep(5)` 后 `recvfrom`；校验源地址为回环才处理——`n>=1` 且 byte0 为 0/1 更新 `g_canAttack`，`n>=2` 时再按 byte1 更新 `g_canPlace`（兼容旧版 1 字节包：byte0 仍生效，canPlace 保持原值）
   - **生命周期门控（随用随上）**：两门控都关闭时轮询线程 unmap 全部映射、UDP 释放端口、注入线程停止扫描，三者 park 在共享唤醒事件上（零唤醒零 CPU）；`NotifyGateToggled()` 按消费者数量脉冲自动重置事件，任一开关一切换三个线程即刻苏醒
   - **fail-safe**：无新数据 300ms 后两个状态一起回落到 0（宁可不点不可误点）
-- **门控**：`clicker.cpp` 中两个独立门 `canAtkGate = !canAttackOnlyClick || g_canAttack == 1`、`canPlaceGate = !placeOnlyRightClick || g_canPlace == 1`；`leftActive/rightActive` 分别加门控（可同时开启）；**所有**离开 CS_WAIT_UP 的路径（门控关闭、停连、关左右键、开多倍模式、定时停止）统一走 `releaseLeft/releaseRight` 补发 UP（防止目标窗口卡按键，见 §7.13）
+- **门控**：`clicker.cpp` 中三个独立门 `canAtkGate = !canAttackOnlyClick || g_canAttack == 1`、`canPlaceGate = !placeOnlyRightClick || g_canPlace == 1`、`cursorGate = !cursorOnlyClick || !IsCursorShowing()`（`GetCursorInfo` 的 `CURSOR_SHOWING`：MC 游戏视角光标隐藏、背包/聊天/菜单可见）；`leftActive/rightActive` 叠加三门控（可同时开启）；**所有**离开 CS_WAIT_UP 的路径（门控关闭、停连、关左右键、开多倍模式、定时停止）统一走 `releaseLeft/releaseRight` 补发 UP（防止目标窗口卡按键，见 §7.13）
 - **注入线程**（反注入要点，两个功能共用同一个注入线程；**任一开关开启即触发注入**，两个都关闭时不注入）：
   - 先 `SeDebugPrivilege`（应对游戏以管理员运行）
   - 只认 `javaw.exe`/`java.exe` + 拥有 `GLFW30`/`LWJGL` 窗口（识别 MC 客户端而非任意 Java 程序）

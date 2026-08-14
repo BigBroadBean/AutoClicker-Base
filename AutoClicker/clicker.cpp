@@ -42,6 +42,15 @@ int multiDelayMs = 20;
 bool randomCpsEnabled = false;
 int randomCpsRange = 2;
 std::atomic<long long> g_debounceUntil{ 0 };
+std::atomic<bool> cursorOnlyClick{ false };
+
+// 系统光标当前是否可见 (MC 背包/聊天/菜单中可见, 游戏视角下隐藏)
+static bool IsCursorShowing()
+{
+    CURSORINFO ci = {};
+    ci.cbSize = sizeof(ci);
+    return GetCursorInfo(&ci) != FALSE && (ci.flags & CURSOR_SHOWING) != 0;
+}
 bool isScrollClickActive = false;
 int scrollClickButton = 0;
 
@@ -549,15 +558,21 @@ void ClickerThreadProc()
         bool canPlaceGate = !placeOnlyRightClick ||
                             g_canPlace.load(std::memory_order_relaxed) == 1;
 
+        // cursor gate: 开启后仅当系统光标不可见 (游戏视角) 时连点,
+        // 光标可见 (背包/聊天/菜单) 时暂停, 避免在 GUI 里误点。
+        bool cursorGate = !cursorOnlyClick.load(std::memory_order_relaxed) ||
+                          !IsCursorShowing();
+
         // gate flipped off mid-click: release the held mouse button immediately
         // so the game never gets stuck with a pressed mouse button
         if (!canAtkGate) releaseLeft();
         if (!canPlaceGate) releaseRight();
+        if (!cursorGate) { releaseLeft(); releaseRight(); }
 
         // never target our own window (see IsOwnWindow above)
         bool targetOk = mhwnd && !IsOwnWindow(mhwnd);
-        bool leftActive = isstart && leftenabled && targetOk && !isMultiActive && canAtkGate;
-        bool rightActive = isstart && rightenabled && targetOk && !isMultiActive && canPlaceGate;
+        bool leftActive = isstart && leftenabled && targetOk && !isMultiActive && canAtkGate && cursorGate;
+        bool rightActive = isstart && rightenabled && targetOk && !isMultiActive && canPlaceGate && cursorGate;
 
         bool leftHeld = leftActive && ((GetAsyncKeyState(VK_LBUTTON) & 0x8000) || keepClicke);
         if (leftHeld) {

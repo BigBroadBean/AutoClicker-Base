@@ -77,7 +77,7 @@ enum Elem {
     E_PRF0, E_PRF1, E_PRF2, E_PRF3,
     E_CHIP_TARGET,
     E_BTN_MIN, E_BTN_MAX, E_BTN_CLOSE,
-    E_BTN_THEME, E_BTN_PIN, E_BTN_SOUND,
+    E_BTN_THEME, E_BTN_PIN, E_BTN_SOUND, E_BTN_CURSOR,
     E_COUNT
 };
 struct HR { RECT r; Elem id; bool hover; };
@@ -116,7 +116,7 @@ static const int kDelayPresets[4] = { 10, 25, 50, 100 };  // ms
 // ---- layout rects ----
 struct LY {
     RECT title, sidebar, nav[5], card[3], status;
-    RECT btnPin, btnTheme, btnSound, btnMin, btnMax, btnClose;
+    RECT btnPin, btnTheme, btnSound, btnCursor, btnMin, btnMax, btnClose;
     RECT prfChip[4];                 // 标题栏方案芯片
     RECT track[SL_COUNT], thumb[SL_COUNT];
     RECT tglL, tglR, tglScroll;
@@ -159,17 +159,18 @@ static void Layout()
 
     // ---- title bar ----
     L.title   = { 0, 6, W, 46 };
-    // 右簇: [方案芯片] 提示音 置顶 主题 最小化 最大化 关闭 (各 28px, 8px 间距)
-    L.btnClose = { W - 44, 12, W - 16, 40 };
-    L.btnMax   = { W - 80, 12, W - 52, 40 };
-    L.btnMin   = { W - 116, 12, W - 88, 40 };
-    L.btnTheme = { W - 152, 12, W - 124, 40 };
-    L.btnPin   = { W - 188, 12, W - 160, 40 };
-    L.btnSound = { W - 224, 12, W - 196, 40 };
-    // 方案芯片: 排布在提示音按钮左侧 (紧凑胶囊)
+    // 右簇: [方案芯片] 光标 提示音 置顶 主题 最小化 最大化 关闭 (各 28px, 8px 间距)
+    L.btnClose  = { W - 44, 12, W - 16, 40 };
+    L.btnMax    = { W - 80, 12, W - 52, 40 };
+    L.btnMin    = { W - 116, 12, W - 88, 40 };
+    L.btnTheme  = { W - 152, 12, W - 124, 40 };
+    L.btnPin    = { W - 188, 12, W - 160, 40 };
+    L.btnSound  = { W - 224, 12, W - 196, 40 };
+    L.btnCursor = { W - 260, 12, W - 232, 40 };
+    // 方案芯片: 排布在光标按钮左侧 (紧凑胶囊; 长名自动省略号)
     {
-        int cw = 46, gap = 6;
-        int x = L.btnSound.left - 10 - (4 * cw + 3 * gap);
+        int cw = 40, gap = 4;
+        int x = L.btnCursor.left - 10 - (4 * cw + 3 * gap);
         for (int i = 0; i < 4; i++) {
             L.prfChip[i] = { x, 11, x + cw, 37 };
             x += cw + gap;
@@ -383,6 +384,7 @@ static void Layout()
     g_hr[E_BTN_THEME]  = { L.btnTheme, E_BTN_THEME, false };
     g_hr[E_BTN_PIN]    = { L.btnPin, E_BTN_PIN, false };
     g_hr[E_BTN_SOUND]  = { L.btnSound, E_BTN_SOUND, false };
+    g_hr[E_BTN_CURSOR] = { L.btnCursor, E_BTN_CURSOR, false };
     g_hr[E_BTN_MIN]    = { L.btnMin, E_BTN_MIN, false };
     g_hr[E_BTN_MAX]    = { L.btnMax, E_BTN_MAX, false };
     g_hr[E_BTN_CLOSE]  = { L.btnClose, E_BTN_CLOSE, false };
@@ -831,6 +833,23 @@ static void DrawDashIcon(HDC dc, int cx, int cy, COLORREF c)
     LineTo(dc, cx + 6, cy - 4);
     DeleteObject(p);
 }
+// 鼠标光标小图标 (箭头三角 + 尾线)
+static void DrawCursorGlyph(HDC dc, int cx, int cy, COLORREF c)
+{
+    HPEN p = CreatePen(PS_SOLID, 2, c);
+    HBRUSH b = CreateSolidBrush(c);
+    SelectObject(dc, p);
+    SelectObject(dc, b);
+    POINT pts[3] = { { cx - 7, cy - 8 }, { cx - 7, cy + 4 }, { cx + 3, cy - 1 } };
+    Polygon(dc, pts, 3);
+    SelectObject(dc, GetStockObject(NULL_BRUSH));
+    MoveToEx(dc, cx + 2, cy - 3, nullptr);
+    LineTo(dc, cx + 9, cy + 5);
+    LineTo(dc, cx + 3, cy + 8);
+    LineTo(dc, cx + 1, cy - 1);
+    DeleteObject(p);
+    DeleteObject(b);
+}
 // ============================================================
 //  glass render: 三层渲染 (chrome / chromeDyn / content) + 合成呈现
 // ============================================================
@@ -907,7 +926,24 @@ static void RenderChrome()
         GText(l, g_hfSmall, TXT_DIM(), verStr.c_str(), vr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     }
 
-    // ---- 提示音 / 图钉 / 主题 / 最小化 / 最大化 / 关闭 (自绘窗控) ----
+    // ---- 光标门控 / 提示音 / 图钉 / 主题 / 最小化 / 最大化 / 关闭 (自绘窗控) ----
+    {
+        RECT& b = L.btnCursor;
+        bool hover = g_hr[E_BTN_CURSOR].hover;
+        GButton(l, b, 13, hover, false, cursorOnlyClick.load(std::memory_order_relaxed));
+        int cx = (b.left + b.right) / 2, cy = (b.top + b.bottom) / 2;
+        DrawCursorGlyph(dc, cx, cy,
+                        cursorOnlyClick.load(std::memory_order_relaxed) ? RGB(255, 255, 255)
+                                                                        : (hover ? ACCENT() : TXT_DIM()));
+        GLLiftAlphaRect(l, b);
+        if (hover) {
+            static const wchar_t* tip[] = {
+                L"开启后仅检测不到光标的时候允许连点",
+                L"光标可见时（背包/聊天/菜单）自动暂停"
+            };
+            RenderTip(l, b, tip, 2);
+        }
+    }
     {
         RECT& b = L.btnSound;
         bool hover = g_hr[E_BTN_SOUND].hover;
@@ -2110,6 +2146,11 @@ static void Click(HWND hwnd, Elem e)
         soundEnabled = !soundEnabled;
         PlayToggleSound(soundEnabled);   // 开关本身必有确认音 (关闭时最后一次)
         ShowToggleToast(L"提示音", soundEnabled);
+        break;
+    case E_BTN_CURSOR:
+        cursorOnlyClick.store(!cursorOnlyClick.load(std::memory_order_relaxed));
+        PlayToggleSound(cursorOnlyClick.load(std::memory_order_relaxed));
+        ShowToggleToast(L"光标检测", cursorOnlyClick.load(std::memory_order_relaxed));
         break;
     // ---- 无边框自绘窗控 ----
     case E_BTN_MIN:

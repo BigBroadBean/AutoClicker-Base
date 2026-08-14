@@ -56,6 +56,10 @@ extern bool topmost;
 // ---- 提示音总开关 (开关/连点/门控等系统提示音) ----
 extern bool soundEnabled;
 
+// ---- 光标门控: 开启后仅当系统光标不可见 (游戏视角) 时连点,
+//      光标可见 (背包/聊天/菜单) 时自动暂停左右键连点 ----
+extern std::atomic<bool> cursorOnlyClick;
+
 // ---- misc ----
 extern std::atomic<long long> g_clickCount;
 extern std::atomic<long long> g_debounceUntil;
