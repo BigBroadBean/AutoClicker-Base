@@ -424,17 +424,6 @@ msbuild AutoClicker.sln /p:Configuration=Release-Base /p:Platform=x64     # Base
 > DLL 由上游项目 [MCCombatStatus-JNI](https://github.com/BigBroadBean/MCCombatStatus-JNI)（V63+，原名 MCCanAttack-JNI）提供。V64 起映射表由 `tools/gen_maps.py` 从 `mappings-extracted` 自动生成 **171 张表**（54 版本 × 4 命名空间：vanilla 混淆名 / forge MCP+SRG→Mojang+stable / mojang 全 Mojang / intermediary Fabric），并按 classpath 版本号自动定位版本。真机验证：原版 1.14、Forge 1.16.5、Fabric 1.16.5/1.21.11、NeoForge 1.20.4/1.21/1.21.11。
 >
 > **V65 起架构变更（规避网易版反检测）**：DLL 不再创建采集线程、不再调用 `AttachCurrentThread`（外来原生线程附加 JVM 会触发 ThreadStart 事件被游戏侧保护检测）。改为钩住 `gdi32!SwapBuffers`（LWJGL2/GLFW WGL 渲染路径的汇合点），在游戏自己的 Client thread 内用 `GetEnv()` 复用其已有 JNIEnv，解析/采样/上报全部帧驱动完成（每帧预算 8ms、采样 5ms 节流、跨帧引用全局化）。**共享内存布局与 UDP 协议完全不变，本程序零改动**；状态刷新频率从固定 5ms 变为渲染帧率（60fps≈16.6ms），300ms 陈旧阈值兼容。**网易中国版 1.20.1 Forge 真机已验证**（注入后游戏存活、target=SnowGolem/canAttack=1 正确、60s 观察无强杀；网易窗口类同为 GLFW30，本程序的注入识别可自动命中）。
->
-> **V66/V67 反检测演进（上游 DLL + 本程序注入路径）**：DLL 升级 V66——敏感字符串 XOR 混淆（防 `-O2` 常量折叠）、**导出表剥离**（本程序只读共享内存，零改动）；V66.1 起 PEB 摘链/PE 头抹除**默认关闭**（真机实锤被网易反作弊判"隐藏/篡改模块"进黑屋）；V66.2 ws2_32 改动态解析（目标未加载 ws2_32 时静态 IAT 跳空崩溃，非网络进程上实测实锤）。
->
-> **V67 本程序注入路径重写（2026-08-14）**：根据吾爱破解对网易反作弊的实测分析（`api-ms-win-crt-utility-l1-1-1.dll` 在游戏启动时扫描**桌面所有文件 + 后台进程的可执行文件**），本程序注入改为：
-> - **手动映射**（移植上游 injector.cpp 的 ManualMap）：不调用 LoadLibrary、无 LoadImage 回调、PEB 模块链表无条目
-> - **载荷加密内嵌**：构建期 `tools/enc_dll.ps1` 把 DLL XOR 0x5A 加密为 `AutoClicker\mcstatus_enc.dat` 嵌入 exe 资源，运行时内存解密 → **磁盘零痕迹**（不再解出 `%TEMP%\AutoClicker\MCCombatStatusJni.dll`）
-> - **进程名中性化**：exe 更名 **InputTuner.exe**（TargetName），避免进程文件名/可执行文件内容被启动扫描直接命中"AutoClicker/连点器"类关键词
-> - **反重复注入**改用共享内存健康检查（手动映射无模块条目，`TH32CS_SNAPMODULE` 不可见）
-> - 仓库根目录另有独立 **injector.exe**（手动映射注入器，DLL 加密内嵌），可单独使用
->
-> **卫生要求（重要）**：工具本体与 DLL 不要放在桌面；不要在桌面留快捷方式；先启动游戏再启动工具（游戏启动时扫描一次桌面与后台进程文件）。网易反作弊无管理员/Ring-0 权限，无法读取 ACL 保护目录；但**账号一旦被标记黑屋，后续无论做什么都会持续进黑屋，需换干净账号并正常游戏一段时间观察**。
 
 ### 协议（已通过反汇编确认）
 
@@ -455,10 +444,9 @@ msbuild AutoClicker.sln /p:Configuration=Release-Base /p:Platform=x64     # Base
   - 先 `SeDebugPrivilege`（应对游戏以管理员运行）
   - 只认 `javaw.exe`/`java.exe` + 拥有 `GLFW30`/`LWJGL` 窗口（识别 MC 客户端而非任意 Java 程序）
   - `IsWow64Process` 排除 32 位进程（DLL 是 x64）
-  - **手动映射注入**（V67）：载荷为内存中解密的内嵌资源（无磁盘文件、无 LoadLibrary、无模块条目）；映射器处理 RVA 布局拷贝 / DIR64 重定位 / MinGW 伪重定位（COFF 符号表）/ `.rdata` 绝对指针启发式补修 / 导入表本地解析（KERNEL32/msvcrt）/ 入口存根线程执行 DllMain / 节区权限收尾
-  - **反重复注入**：共享内存 `Local\MCCombatStatus_<pid>` 健康检查（magic/version 匹配）+ 模块枚举兜底；已注入 PID 入集合，进程退出后清除（游戏重启自动重新注入）
-  - DllMain 返回非 1（崩溃/异常）判失败；失败 1s→30s 指数退避（等待可被门控切换中断），跳过/失败日志按 PID 节流（首次 + 每 16 次尝试）
-  - 目标进程未加载 ws2_32 时 DLL 自动跳过 UDP（共享内存不受影响，V66.2 动态解析）
+  - `TH32CS_SNAPMODULE` 检查 DLL 是否已加载 → 绝不重复注入；已注入的 PID 入集合，进程退出后从集合清除（游戏重启会自动重新注入）
+  - `CreateRemoteThread(LoadLibraryA)` 等待 3s，超时后复查模块列表再判定成败
+  - 注入失败 1s→30s 指数退避（等待可被门控切换中断），跳过/失败日志按 PID 节流（首次 + 每 16 次尝试），日志不再无限膨胀
 - **UI**：连点页第三行 = 仅能攻击时连点开关 + 状态芯片（可攻击/不可攻击/未连接）+ 快捷键；第四行 = 仅手持放置物时右键连点开关 + 状态芯片（手持放置物/非放置物/未连接）+ 快捷键；状态栏第 4/5 个指示灯（绿=1，红=0，灰=无数据）；配置追加 4 行（末尾追加，向后兼容）
 
 ### 已知限制

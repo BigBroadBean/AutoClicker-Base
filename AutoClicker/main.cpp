@@ -2290,9 +2290,6 @@ int WINAPI WinMain(HINSTANCE hI, HINSTANCE, LPSTR, int nShow)
     ShowWindow(hwnd, nShow); UpdateWindow(hwnd);
     std::thread(ClickerThreadProc).detach();
     StartMultiClickHook();
-    // V70.1/V70.2 代理自动安装已废弃 (网易启动器校验 natives/jar 会弹未知
-    // 错误, 该方向已放弃): 不再自动改动游戏文件。网易版请使用"纯连点模式"
-    // (不开两个门控 = 工具完全不碰游戏进程, 零注入零检测面)。
     StartCanAttackMonitor();
     StartCanAttackShmPoller();
     StartInjectorThread();
