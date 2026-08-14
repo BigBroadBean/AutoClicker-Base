@@ -936,13 +936,8 @@ static void RenderChrome()
                         cursorOnlyClick.load(std::memory_order_relaxed) ? RGB(255, 255, 255)
                                                                         : (hover ? ACCENT() : TXT_DIM()));
         GLLiftAlphaRect(l, b);
-        if (hover) {
-            static const wchar_t* tip[] = {
-                L"开启后仅检测不到光标的时候允许连点",
-                L"光标可见时（背包/聊天/菜单）自动暂停"
-            };
-            RenderTip(l, b, tip, 2);
-        }
+        // 悬停提示画在 content 层 (见 RenderContent 的"悬停提示(最上层)"),
+        // chrome 层会被内容卡片盖住下半部分。
     }
     {
         RECT& b = L.btnSound;
@@ -1734,6 +1729,14 @@ static void RenderContent()
                 L"可绑定切换热键（高级页）"
             };
             RenderTip(l, L.prfChip[i], tip, 3);
+        }
+        // 光标门控开关 (标题栏; 提示需画在 content 层才不会被卡片盖住)
+        if (g_hr[E_BTN_CURSOR].hover) {
+            static const wchar_t* tip[] = {
+                L"开启后仅检测不到光标的时候允许连点",
+                L"光标可见时（背包/聊天/菜单）自动暂停"
+            };
+            RenderTip(l, L.btnCursor, tip, 2);
         }
         // 目标芯片 (状态栏)
         if (g_hr[E_CHIP_TARGET].hover) {
