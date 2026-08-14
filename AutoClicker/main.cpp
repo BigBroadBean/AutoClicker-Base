@@ -60,8 +60,8 @@ enum Elem {
     E_TGL_L, E_TGL_R, E_SL_L, E_SL_R, E_BTN_KEY, E_BTN_KEEP,
     E_BTN_CANATK, E_CHIP_CANATK, E_BTN_CANATK_KEY,
     E_BTN_PLACE, E_CHIP_PLACE, E_BTN_PLACE_KEY,
-    E_PRE_L0, E_PRE_L1, E_PRE_L2, E_PRE_L3,
-    E_PRE_R0, E_PRE_R1, E_PRE_R2, E_PRE_R3,
+    E_PRE_L0, E_PRE_L1, E_PRE_L2, E_PRE_L3, E_PRE_L4, E_PRE_L5,
+    E_PRE_R0, E_PRE_R1, E_PRE_R2, E_PRE_R3, E_PRE_R4, E_PRE_R5,
     // multi page
     E_SL_MUL, E_SL_DEL, E_BTN_MKEY,
     E_PRE_M0, E_PRE_M1, E_PRE_M2, E_PRE_M3,
@@ -109,7 +109,7 @@ static DWORD    s_sparkLastMs = 0;
 static ULONGLONG s_sessionStartMs = 0;       // 会话开始 (面板显示用时)
 
 // ---- preset tables ----
-static const int kCpsPresets[4]   = { 6, 10, 15, 20 };    // CPS
+static const int kCpsPresets[6]   = { 6, 10, 15, 20, 30, 40 };    // CPS
 static const int kMulPresets[4]   = { 2, 3, 4, 5 };       // x倍
 static const int kDelayPresets[4] = { 10, 25, 50, 100 };  // ms
 
@@ -123,7 +123,7 @@ struct LY {
     RECT btnKey, btnKeep, btnMKey;
     RECT btnCanAtk, canAtkChip, btnCanAtkKey;
     RECT btnPlace, placeChip, btnPlaceKey;
-    RECT preL[4], preR[4], preM[4], preD[4];
+    RECT preL[6], preR[6], preM[4], preD[4];
     RECT btnScrollKey, btnScrollLR, btnScrollLRKey;
     RECT inpMax, chkRand, chkAutoStop, inpAutoStop;
     RECT hm[4], humLevelLbl;         // 拟人化模式芯片 + 强度标签
@@ -254,8 +254,9 @@ static void Layout()
         L.tglR = { L.card[1].right - 58, L.card[1].top + S(14),
                    L.card[1].right - 16, L.card[1].top + S(34) };
         {
-            int pw = (L.card[0].right - L.card[0].left - 32 - 24) / 4;
-            for (int k = 0; k < 4; k++) {
+            // 6 档预设 (含 30/s、40/s): 5 个 8px 间隔
+            int pw = (L.card[0].right - L.card[0].left - 32 - 40) / 6;
+            for (int k = 0; k < 6; k++) {
                 int xl = L.card[0].left + 16 + k * (pw + 8);
                 int xr = L.card[1].left + 16 + k * (pw + 8);
                 L.preL[k] = { xl, L.card[0].top + S(96), xl + pw, L.card[0].top + S(124) };
@@ -403,7 +404,7 @@ static void Layout()
         g_hr[E_BTN_PLACE] = { L.btnPlace, E_BTN_PLACE, false };
         g_hr[E_CHIP_PLACE] = { L.placeChip, E_CHIP_PLACE, false };
         g_hr[E_BTN_PLACE_KEY] = { L.btnPlaceKey, E_BTN_PLACE_KEY, false };
-        for (int k = 0; k < 4; k++) {
+        for (int k = 0; k < 6; k++) {
             g_hr[E_PRE_L0 + k] = { L.preL[k], (Elem)(E_PRE_L0 + k), false };
             g_hr[E_PRE_R0 + k] = { L.preR[k], (Elem)(E_PRE_R0 + k), false };
         }
@@ -1211,8 +1212,8 @@ static void RenderContent()
     };
 
     auto DrawPresetRow = [&](const RECT* pre, int baseElem,
-                             const wchar_t* const* labels, int selIdx) {
-        for (int k = 0; k < 4; k++) {
+                             const wchar_t* const* labels, int selIdx, int n) {
+        for (int k = 0; k < n; k++) {
             const RECT& b = pre[k];
             bool sel = (selIdx == k);
             bool hover = g_hr[baseElem + k].hover;
@@ -1229,14 +1230,14 @@ static void RenderContent()
         GSlider(l, SL_L, E_SL_L);
         GSlider(l, SL_R, E_SL_R);
 
-        static const wchar_t* cpsLbl[4] = { L"6/s", L"10/s", L"15/s", L"20/s" };
+        static const wchar_t* cpsLbl[6] = { L"6/s", L"10/s", L"15/s", L"20/s", L"30/s", L"40/s" };
         int selL = -1, selR = -1;
-        for (int k = 0; k < 4; k++) {
+        for (int k = 0; k < 6; k++) {
             if (cpsLeft10  == kCpsPresets[k] * 10) selL = k;
             if (cpsRight10 == kCpsPresets[k] * 10) selR = k;
         }
-        DrawPresetRow(L.preL, E_PRE_L0, cpsLbl, selL);
-        DrawPresetRow(L.preR, E_PRE_R0, cpsLbl, selR);
+        DrawPresetRow(L.preL, E_PRE_L0, cpsLbl, selL, 6);
+        DrawPresetRow(L.preR, E_PRE_R0, cpsLbl, selR, 6);
 
         // 数值
         for (int i = 0; i < 2; i++) {
@@ -1343,8 +1344,8 @@ static void RenderContent()
             if (multiMul == kMulPresets[k])       selM = k;
             if (multiDelayMs == kDelayPresets[k]) selD = k;
         }
-        DrawPresetRow(L.preM, E_PRE_M0, mulLbl, selM);
-        DrawPresetRow(L.preD, E_PRE_D0, delLbl, selD);
+        DrawPresetRow(L.preM, E_PRE_M0, mulLbl, selM, 4);
+        DrawPresetRow(L.preD, E_PRE_D0, delLbl, selD, 4);
 
         wchar_t buf[32];
         swprintf(buf, 32, L"%d 倍", multiMul);
@@ -1724,7 +1725,7 @@ static void RenderContent()
                     L"开启后仅左键在准星对准可攻击生物时连点",
                     L"右键不受影响；未开启时左右键照常",
                     L"支持版本：1.8.8 ~ 1.21.11 几乎全版本（原版/Forge/Fabric/NeoForge）",
-                    L"网易中国版（盒子）受反作弊保护，无法使用"
+                    L"网易中国版已实测可用（1.20.1 Forge）"
                 };
                 RenderTip(l, L.btnCanAtk, tip, 4);
             }
@@ -1732,7 +1733,7 @@ static void RenderContent()
                 if (!CanAttackConnected()) {
                     static const wchar_t* tip[] = {
                         L"未收到游戏上报（未注入/游戏未运行）",
-                        L"网易中国版受反作弊保护无法使用，此时按不可攻击处理"
+                        L"请先启动游戏并开启此开关，此时按不可攻击处理"
                     };
                     RenderTip(l, L.canAtkChip, tip, 2);
                 } else if (g_canAttack.load(std::memory_order_relaxed) == 1) {
@@ -2016,14 +2017,16 @@ static void Click(HWND hwnd, Elem e)
         if (placeOnlyRightClick && !CanAttackDllAvailable())
             ShowToast(L"\x63d0\x793a", L"\x672a\x627e\x5230 DLL", RED());
         break;
-    case E_PRE_L0: case E_PRE_L1: case E_PRE_L2: case E_PRE_L3: {
+    case E_PRE_L0: case E_PRE_L1: case E_PRE_L2: case E_PRE_L3:
+    case E_PRE_L4: case E_PRE_L5: {
         int idx = e - E_PRE_L0;
         int c10 = kCpsPresets[idx] * 10;
         if (c10 > cpsMax * 10) c10 = cpsMax * 10;
         cpsLeft10 = c10; leftms = cpsToMs(c10);
         break;
     }
-    case E_PRE_R0: case E_PRE_R1: case E_PRE_R2: case E_PRE_R3: {
+    case E_PRE_R0: case E_PRE_R1: case E_PRE_R2: case E_PRE_R3:
+    case E_PRE_R4: case E_PRE_R5: {
         int idx = e - E_PRE_R0;
         int c10 = kCpsPresets[idx] * 10;
         if (c10 > cpsMax * 10) c10 = cpsMax * 10;
