@@ -2,6 +2,8 @@
 
 # AutoClicker
 
+> Current version **v2.9** | [Changelog](CHANGELOG.md)
+
 A lightweight Windows auto-clicker with a **sidebar navigation + Glassmorphism UI**, built with C++20 and GDI. Dark & light themes included.
 
 - **Glassmorphism window**: the whole window is a layered translucent surface (UpdateLayeredWindow + 32bpp premultiplied-alpha 3-layer cache); **borderless** — custom-drawn title bar (minimize/maximize/close controls + sound + pin + theme + profile chips), rounded corners let the desktop show through, drag / edge-resize / double-click-to-maximize / snap all work; cards/sidebar/status bar are frosted panels with hairline borders, top sheen gradients and soft shadows — "deep-space glass" in dark mode, "mist-white glass" in light mode
