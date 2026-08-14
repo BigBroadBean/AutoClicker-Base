@@ -6,5 +6,6 @@
 // remains consistent on all systems)
 IDI_ICON1               ICON                    "icon.ico"
 
-// Embedded MCCombatStatusJni.dll (extracted to %%TEMP%% at startup)
-IDR_MC_DLL              RCDATA                  "MCCombatStatusJni.dll"
+// Embedded MCCombatStatusJni.dll (XOR 0x5A encrypted by tools/enc_dll.ps1;
+// decrypted in memory at runtime, manual-mapped - never written to disk)
+IDR_MC_DLL              RCDATA                  "mcstatus_enc.dat"

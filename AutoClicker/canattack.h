@@ -25,8 +25,12 @@
 //      the same 2-byte datagrams. Lifecycle-gated: the port is only bound
 //      while a gate is on, so other apps can use 35785 meanwhile.
 //   3. Injector      : periodically finds Minecraft Java processes that do NOT
-//      have the DLL loaded yet and injects them (LoadLibrary remote thread),
-//      with anti-double-injection handling, failure backoff and log throttling.
+//      have the DLL loaded yet and injects them via MANUAL MAPPING (V67:
+//      no LoadLibrary, no module-list entry, payload decrypted in memory and
+//      never written to disk - the NetEase client-side anti-cheat scans
+//      desktop files and background-process executables), with
+//      anti-double-injection handling (shared-memory health check),
+//      failure backoff and log throttling.
 //      Parks on an event while both gates are off.
 
 // ---- feature state ----
@@ -53,7 +57,8 @@ void GetShmTargetName(char* out, size_t cap);   // 准星目标类名 (可空)
 // true while fresh status is arriving (game injected & running)
 bool CanAttackConnected();
 
-// true when MCCombatStatusJni.dll can be located next to the exe / in CWD
+// true when a payload is available (embedded encrypted resource or a sidecar
+// MCCombatStatusJni.dll next to the exe / in CWD)
 bool CanAttackDllAvailable();
 
 // start the background threads (called once from WinMain)

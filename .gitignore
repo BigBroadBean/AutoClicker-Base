@@ -55,6 +55,8 @@ Desktop.ini
 !/MCCombatStatusJni.dll
 ## V66 手动映射注入器 (随发布分发)
 !/injector.exe
+## 构建期生成的加密载荷 (tools/enc_dll.ps1 生成)
+AutoClicker/mcstatus_enc.dat
 
 ## 会话规划临时目录
 .zcode/

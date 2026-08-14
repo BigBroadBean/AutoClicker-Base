@@ -4,7 +4,7 @@
 #   阶段D: 门控关(UI点击) + 光标可见 -> 应放行 (>0)
 $ErrorActionPreference = 'Stop'
 $appd = "$env:APPDATA\AutoClicker"
-$exe = 'D:\VibeCoding\AutoClicker-main\x64\Release\AutoClicker.exe'
+$exe = 'D:\VibeCoding\AutoClicker-main\x64\Release\InputTuner.exe'
 
 Add-Type -TypeDefinition @'
 using System;

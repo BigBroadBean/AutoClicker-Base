@@ -48,6 +48,7 @@
     <UseDebugLibraries>true</UseDebugLibraries>
     <PlatformToolset>v145</PlatformToolset>
     <CharacterSet>MultiByte</CharacterSet>
+    <TargetName>InputTuner</TargetName>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
@@ -55,6 +56,7 @@
     <PlatformToolset>v145</PlatformToolset>
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <CharacterSet>MultiByte</CharacterSet>
+    <TargetName>InputTuner</TargetName>
   </PropertyGroup>
   <!-- Release-Base: 无网络版（不定义 AUTOCLICKER_NET，不编译 report/update/httputil） -->
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release-Base|x64'" Label="Configuration">
@@ -63,6 +65,7 @@
     <PlatformToolset>v145</PlatformToolset>
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <CharacterSet>MultiByte</CharacterSet>
+    <TargetName>InputTuner</TargetName>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <ImportGroup Label="ExtensionSettings">
@@ -133,7 +136,7 @@
     </Link>
     <PreBuildEvent>
       <Command>if not exist "$(SolutionDir)MCCombatStatusJni.dll" exit 1
-xcopy /y "$(SolutionDir)MCCombatStatusJni.dll" "$(ProjectDir)" &gt;nul
+powershell -NoProfile -ExecutionPolicy Bypass -File "$(SolutionDir)tools\enc_dll.ps1"
 if errorlevel 1 exit 1</Command>
     </PreBuildEvent>
   </ItemDefinitionGroup>
@@ -157,11 +160,10 @@ if errorlevel 1 exit 1</Command>
     </Link>
     <PreBuildEvent>
       <Command>if not exist "$(SolutionDir)MCCombatStatusJni.dll" exit 1
-xcopy /y "$(SolutionDir)MCCombatStatusJni.dll" "$(ProjectDir)" &gt;nul
+powershell -NoProfile -ExecutionPolicy Bypass -File "$(SolutionDir)tools\enc_dll.ps1"
 if errorlevel 1 exit 1</Command>
     </PreBuildEvent>
   </ItemDefinitionGroup>
-  <!-- Release-Base: 无网络版（不定义 AUTOCLICKER_NET，不编译 report/update/httputil） -->
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release-Base|x64'">
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
@@ -182,7 +184,7 @@ if errorlevel 1 exit 1</Command>
     </Link>
     <PreBuildEvent>
       <Command>if not exist "$(SolutionDir)MCCombatStatusJni.dll" exit 1
-xcopy /y "$(SolutionDir)MCCombatStatusJni.dll" "$(ProjectDir)" &gt;nul
+powershell -NoProfile -ExecutionPolicy Bypass -File "$(SolutionDir)tools\enc_dll.ps1"
 if errorlevel 1 exit 1</Command>
     </PreBuildEvent>
   </ItemDefinitionGroup>

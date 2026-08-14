@@ -15,6 +15,7 @@
 #include <set>
 #include <map>
 #include <vector>
+#include <algorithm>
 #include <cstring>
 #include <cstdio>
 #include <cstdarg>
@@ -388,68 +389,73 @@ static void EnableDebugPrivilege()
     }
 }
 
-// extract MCCombatStatusJni.dll from the embedded RCDATA resource into
-// %TEMP%\AutoClicker\ so a single exe is enough to run (no sidecar DLL)
-static bool ExtractEmbeddedDll()
+// ============================================================
+//  payload (V67): 内嵌加密 DLL 资源, 直接内存解密后手动映射注入。
+//  不再解出到 %TEMP%、不再 LoadLibrary —— 磁盘零痕迹、进程内无模块条目。
+//  (网易客户端反作弊会扫描桌面文件与后台进程可执行文件, 见 DEVELOPMENT.md)
+// ============================================================
+static BYTE* LoadEmbeddedPayload(size_t* outLen)
 {
     HRSRC hr = FindResourceA(nullptr, MAKEINTRESOURCEA(IDR_MC_DLL), RT_RCDATA);
-    if (!hr) return false;
+    if (!hr) return nullptr;
     HGLOBAL hg = LoadResource(nullptr, hr);
-    if (!hg) return false;
-    void* p = LockResource(hg);
+    if (!hg) return nullptr;
+    const BYTE* p = (const BYTE*)LockResource(hg);
     DWORD sz = SizeofResource(nullptr, hr);
-    if (!p || sz == 0) return false;
-
-    char path[MAX_PATH] = {};
-    if (!GetTempPathA(MAX_PATH, path)) return false;
-    strcat_s(path, "AutoClicker");
-    CreateDirectoryA(path, nullptr);
-    strcat_s(path, "\\MCCombatStatusJni.dll");
-
-    HANDLE f = CreateFileA(path, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
-                           FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (f == INVALID_HANDLE_VALUE) return false;
-    DWORD written = 0;
-    WriteFile(f, p, sz, &written, nullptr);
-    CloseHandle(f);
-    return written == sz;
+    if (!p || sz == 0) return nullptr;
+    BYTE* buf = (BYTE*)VirtualAlloc(nullptr, sz, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    if (!buf) return nullptr;
+    for (DWORD i = 0; i < sz; i++) buf[i] = (BYTE)(p[i] ^ 0x5A);   // 构建期 XOR 0x5A
+    *outLen = sz;
+    return buf;
 }
 
-// resolve the DLL path: exe directory -> working directory -> embedded copy
-static bool ResolveDllPath(char* out, SIZE_T cap)
+// sidecar 明文 DLL (exe 同目录 / CWD) 优先 —— 便于不重编译更新 DLL;
+// 只读入内存用于手动映射, 仍然不落盘、不 LoadLibrary。
+static BYTE* LoadSidecarPayload(size_t* outLen)
 {
     char path[MAX_PATH] = {};
     GetModuleFileNameA(nullptr, path, MAX_PATH);
     char* slash = strrchr(path, '\\');
     if (slash) *(slash + 1) = '\0';
     strcat_s(path, "MCCombatStatusJni.dll");
-    if (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES) {
-        strncpy_s(out, cap, path, _TRUNCATE);
-        return true;
+    if (GetFileAttributesA(path) == INVALID_FILE_ATTRIBUTES) {
+        GetCurrentDirectoryA(MAX_PATH, path);
+        size_t len = strlen(path);
+        if (len > 0 && path[len - 1] != '\\') strcat_s(path, "\\");
+        strcat_s(path, "MCCombatStatusJni.dll");
+        if (GetFileAttributesA(path) == INVALID_FILE_ATTRIBUTES) return nullptr;
     }
-    GetCurrentDirectoryA(MAX_PATH, path);
-    size_t len = strlen(path);
-    if (len > 0 && path[len - 1] != '\\') strcat_s(path, "\\");
-    strcat_s(path, "MCCombatStatusJni.dll");
-    if (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES) {
-        strncpy_s(out, cap, path, _TRUNCATE);
-        return true;
+    HANDLE f = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, nullptr,
+                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return nullptr;
+    DWORD sz = GetFileSize(f, nullptr);
+    BYTE* buf = (BYTE*)VirtualAlloc(nullptr, sz, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    if (buf) {
+        DWORD rd = 0;
+        ReadFile(f, buf, sz, &rd, nullptr);
+        if (rd != sz) { VirtualFree(buf, 0, MEM_RELEASE); buf = nullptr; }
     }
-    // 3. embedded copy extracted to %TEMP%\AutoClicker
-    if (GetTempPathA(MAX_PATH, path)) {
-        strcat_s(path, "AutoClicker\\MCCombatStatusJni.dll");
-        if (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES) {
-            strncpy_s(out, cap, path, _TRUNCATE);
-            return true;
-        }
-    }
-    return false;
+    CloseHandle(f);
+    if (buf) *outLen = sz;
+    return buf;
+}
+
+static BYTE* LoadPayload(size_t* outLen)
+{
+    BYTE* p = LoadSidecarPayload(outLen);
+    if (p) return p;
+    return LoadEmbeddedPayload(outLen);
 }
 
 bool CanAttackDllAvailable()
 {
-    char path[MAX_PATH] = {};
-    return ResolveDllPath(path, MAX_PATH);
+    HRSRC hr = FindResourceA(nullptr, MAKEINTRESOURCEA(IDR_MC_DLL), RT_RCDATA);
+    if (hr) return true;
+    size_t n = 0;
+    BYTE* p = LoadSidecarPayload(&n);
+    if (p) { VirtualFree(p, 0, MEM_RELEASE); return true; }
+    return false;
 }
 
 // x64 DLL can only go into 64-bit processes
@@ -524,61 +530,280 @@ static bool HasMinecraftWindow(DWORD pid)
     return ctx.found;
 }
 
-// classic LoadLibraryA remote-thread injection with full error handling.
-// verbose=false throttles the per-step logs on repeated retries (log spam
-// when the game runs elevated and injection keeps failing).
-static bool InjectDll(DWORD pid, const char* path, bool verbose)
+// ============================================================
+//  手动映射注入 (V67, 移植自上游 injector.cpp 的 ManualMap)
+//  不调用 LoadLibrary: 无 LoadImage 回调、PEB 模块链表无条目、不落盘。
+//  处理: RVA 布局拷贝 / DIR64 重定位 / MinGW 伪重定位 (COFF 符号表) /
+//  .rdata 绝对指针启发式补修 / 导入表本地解析 / 入口存根线程。
+// ============================================================
+struct CoffSym {
+    char   name[8];
+    DWORD  value;
+    SHORT  section;
+    WORD   type;
+    BYTE   sclass;
+    BYTE   naux;
+};
+
+static const char* CoffNameOf(const CoffSym* s, const char* strtab)
 {
-    HANDLE hp = OpenProcess(PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION |
-                            PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ,
-                            FALSE, pid);
-    if (!hp) {
+    if (s->name[0] == 0 && s->name[1] == 0 && s->name[2] == 0 && s->name[3] == 0) {
+        DWORD off = *(DWORD*)(s->name + 4);
+        return strtab + off;
+    }
+    static char buf[9];
+    memcpy(buf, s->name, 8);
+    buf[8] = 0;
+    return buf;
+}
+
+static bool ApplyPseudoRelocs(HANDLE proc, BYTE* base, const BYTE* workImg,
+                              const BYTE* imgFile, size_t imgSize)
+{
+    IMAGE_DOS_HEADER* dos = (IMAGE_DOS_HEADER*)imgFile;
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE) return true;
+    IMAGE_NT_HEADERS64* nt = (IMAGE_NT_HEADERS64*)(imgFile + dos->e_lfanew);
+    DWORD symOff = nt->FileHeader.PointerToSymbolTable;
+    DWORD symNum = nt->FileHeader.NumberOfSymbols;
+    if (!symOff || !symNum) return true;
+    if (symOff + (size_t)symNum * 18 + 4 > imgSize) return true;
+    const CoffSym* syms = (const CoffSym*)(imgFile + symOff);
+    const char* strtab = (const char*)(imgFile + symOff + (size_t)symNum * 18);
+
+    DWORD listRva = 0, endRva = 0;
+    for (DWORD i = 0; i < symNum; i++) {
+        const CoffSym* s = &syms[i];
+        const char* nm = CoffNameOf(s, strtab);
+        if (strcmp(nm, "___RUNTIME_PSEUDO_RELOC_LIST__") == 0)
+            listRva = s->value;
+        else if (strcmp(nm, "___RUNTIME_PSEUDO_RELOC_LIST_END__") == 0)
+            endRva = s->value;
+        i += s->naux;
+    }
+    if (!listRva || !endRva || endRva <= listRva) return true;
+
+    for (DWORD rva = listRva; rva + 24 <= endRva; rva += 24) {
+        DWORD_PTR sym, target, addend;
+        memcpy(&sym,    workImg + rva,      8);
+        memcpy(&target, workImg + rva + 8,  8);
+        memcpy(&addend, workImg + rva + 16, 8);
+        DWORD_PTR val = (DWORD_PTR)base + sym + addend;
+        if (!WriteProcessMemory(proc, base + target, &val, 8, nullptr))
+            return false;
+    }
+    return true;
+}
+
+static bool ManualMapInject(DWORD pid, const BYTE* imgFile, size_t imgSize, bool verbose)
+{
+    HANDLE proc = OpenProcess(PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION |
+                              PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ,
+                              FALSE, pid);
+    if (!proc) {
         if (verbose) LogInject("pid %lu: OpenProcess FAILED err=%lu", pid, GetLastError());
         return false;
     }
-    if (verbose) LogInject("pid %lu: OpenProcess OK", pid);
+    BYTE* base = nullptr;
+    BYTE* work = nullptr;
+    void* stubAddr = nullptr;
+    HANDLE th = nullptr;
+    bool ok = false;
 
-    SIZE_T len = strlen(path) + 1;
-    void* mem = VirtualAllocEx(hp, nullptr, len, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-    if (!mem) {
-        if (verbose) LogInject("pid %lu: VirtualAllocEx FAILED err=%lu", pid, GetLastError());
-        CloseHandle(hp);
-        return false;
+    if (imgSize < sizeof(IMAGE_DOS_HEADER)) goto fail;
+    if (((IMAGE_DOS_HEADER*)imgFile)->e_magic != IMAGE_DOS_SIGNATURE) goto fail;
+    {
+        IMAGE_NT_HEADERS64* ntF = (IMAGE_NT_HEADERS64*)(imgFile + ((IMAGE_DOS_HEADER*)imgFile)->e_lfanew);
+        if (ntF->Signature != IMAGE_NT_SIGNATURE) goto fail;
+
+        DWORD sizeOfImage = ntF->OptionalHeader.SizeOfImage;
+        DWORD sizeOfHeaders = ntF->OptionalHeader.SizeOfHeaders;
+        ULONGLONG prefBase = ntF->OptionalHeader.ImageBase;
+
+        // RVA 布局工作缓冲: 节区文件偏移 ≠ RVA, 重定位/导入/伪重定位解析必须
+        // 在 RVA 布局上做 (否则 .reloc/.idata 读到错误内容)。
+        work = (BYTE*)VirtualAlloc(nullptr, sizeOfImage, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+        if (!work) goto fail;
+        memset(work, 0, sizeOfImage);
+        {
+            size_t hdrN = imgSize < sizeOfHeaders ? imgSize : sizeOfHeaders;
+            memcpy(work, imgFile, hdrN);
+            IMAGE_SECTION_HEADER* secW = IMAGE_FIRST_SECTION(ntF);
+            for (int i = 0; i < ntF->FileHeader.NumberOfSections; i++) {
+                if (secW[i].SizeOfRawData && secW[i].VirtualAddress < sizeOfImage &&
+                    secW[i].PointerToRawData < imgSize) {
+                    size_t n = secW[i].SizeOfRawData;
+                    if (secW[i].PointerToRawData + n > imgSize) n = imgSize - secW[i].PointerToRawData;
+                    if (secW[i].VirtualAddress + n > sizeOfImage) n = sizeOfImage - secW[i].VirtualAddress;
+                    memcpy(work + secW[i].VirtualAddress, imgFile + secW[i].PointerToRawData, n);
+                }
+            }
+        }
+        const BYTE* img = work;   // RVA 布局视图
+        IMAGE_DOS_HEADER* dos = (IMAGE_DOS_HEADER*)img;
+        IMAGE_NT_HEADERS64* nt = (IMAGE_NT_HEADERS64*)(img + dos->e_lfanew);
+        IMAGE_SECTION_HEADER* sec = IMAGE_FIRST_SECTION(nt);
+
+        // 1. 远端分配 RW
+        base = (BYTE*)VirtualAllocEx(proc, nullptr, sizeOfImage,
+                                     MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+        if (!base) { if (verbose) LogInject("pid %lu: VirtualAllocEx FAILED err=%lu", pid, GetLastError()); goto fail; }
+
+        // 2. 头 + 节区 (从文件缓冲按文件偏移读; RVA 缓冲不能用于此)
+        if (!WriteProcessMemory(proc, base, imgFile, sizeOfHeaders, nullptr)) goto fail;
+        for (int i = 0; i < nt->FileHeader.NumberOfSections; i++) {
+            if (sec[i].SizeOfRawData &&
+                !WriteProcessMemory(proc, base + sec[i].VirtualAddress,
+                                    imgFile + sec[i].PointerToRawData,
+                                    sec[i].SizeOfRawData, nullptr)) goto fail;
+        }
+
+        // 3. DIR64 重定位
+        ULONGLONG delta = (ULONGLONG)base - prefBase;
+        if (delta) {
+            IMAGE_DATA_DIRECTORY& reloc = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC];
+            DWORD off = 0;
+            while (off + sizeof(IMAGE_BASE_RELOCATION) <= reloc.Size) {
+                DWORD blkFile = reloc.VirtualAddress + off;
+                if (blkFile + sizeof(IMAGE_BASE_RELOCATION) > sizeOfImage) break;
+                IMAGE_BASE_RELOCATION* blk = (IMAGE_BASE_RELOCATION*)(img + blkFile);
+                if (blk->SizeOfBlock < sizeof(IMAGE_BASE_RELOCATION)) break;
+                if ((ULONGLONG)reloc.VirtualAddress + off + blk->SizeOfBlock > sizeOfImage) break;
+                DWORD count = (blk->SizeOfBlock - sizeof(IMAGE_BASE_RELOCATION)) / 2;
+                WORD* items = (WORD*)((BYTE*)blk + sizeof(IMAGE_BASE_RELOCATION));
+                for (DWORD i = 0; i < count; i++) {
+                    if ((items[i] >> 12) == IMAGE_REL_BASED_DIR64) {
+                        DWORD rva = blk->VirtualAddress + (items[i] & 0xFFF);
+                        if (rva + 8 > sizeOfImage) continue;
+                        ULONGLONG val = *(ULONGLONG*)(img + rva) + delta;
+                        if (!WriteProcessMemory(proc, base + rva, &val, 8, nullptr)) goto fail;
+                    }
+                }
+                off += blk->SizeOfBlock;
+            }
+        }
+
+        // 3b. MinGW .rdata 绝对指针启发式补修 (无标准 reloc 条目, 期望首选基址)
+        {
+            std::vector<DWORD> covered;
+            covered.reserve(2048);
+            {
+                IMAGE_DATA_DIRECTORY& reloc2 = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC];
+                DWORD off2 = 0;
+                while (off2 + sizeof(IMAGE_BASE_RELOCATION) <= reloc2.Size) {
+                    IMAGE_BASE_RELOCATION* blk = (IMAGE_BASE_RELOCATION*)(img + reloc2.VirtualAddress + off2);
+                    if (!blk->SizeOfBlock || blk->SizeOfBlock < sizeof(IMAGE_BASE_RELOCATION)) break;
+                    DWORD count = (blk->SizeOfBlock - sizeof(IMAGE_BASE_RELOCATION)) / 2;
+                    WORD* items = (WORD*)((BYTE*)blk + sizeof(IMAGE_BASE_RELOCATION));
+                    for (DWORD i = 0; i < count; i++)
+                        if ((items[i] >> 12) == IMAGE_REL_BASED_DIR64)
+                            covered.push_back(blk->VirtualAddress + (items[i] & 0xFFF));
+                    off2 += blk->SizeOfBlock;
+                }
+            }
+            std::sort(covered.begin(), covered.end());
+            for (int i = 0; i < nt->FileHeader.NumberOfSections; i++) {
+                DWORD ch = sec[i].Characteristics;
+                if (!(ch & IMAGE_SCN_MEM_READ) || (ch & IMAGE_SCN_CNT_CODE)) continue;
+                DWORD va = sec[i].VirtualAddress;
+                DWORD vs = sec[i].Misc.VirtualSize ? sec[i].Misc.VirtualSize : sec[i].SizeOfRawData;
+                if (va + vs > sizeOfImage) vs = sizeOfImage - va;
+                for (DWORD o = 0; o + 8 <= vs; o++) {
+                    if (std::binary_search(covered.begin(), covered.end(), va + o)) continue;
+                    ULONGLONG v = *(ULONGLONG*)(img + va + o);
+                    if (v >= prefBase && v < prefBase + sizeOfImage) {
+                        ULONGLONG nv = v + delta;
+                        WriteProcessMemory(proc, base + va + o, &nv, 8, nullptr);
+                    }
+                }
+            }
+        }
+
+        // 4. 导入表: 系统 DLL 基址全局一致, 本地解析直接填 IAT
+        {
+            IMAGE_DATA_DIRECTORY& imp = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+            DWORD off = 0;
+            while (off + sizeof(IMAGE_IMPORT_DESCRIPTOR) <= imp.Size) {
+                IMAGE_IMPORT_DESCRIPTOR* desc = (IMAGE_IMPORT_DESCRIPTOR*)(img + imp.VirtualAddress + off);
+                if (!desc->Name && !desc->FirstThunk) break;
+                const char* dllName = (const char*)(img + desc->Name);
+                HMODULE mod = GetModuleHandleA(dllName);
+                if (!mod) mod = LoadLibraryA(dllName);
+                if (!mod) { if (verbose) LogInject("pid %lu: 依赖模块未加载: %s", pid, dllName); goto fail; }
+                ULONGLONG* origThunk = (ULONGLONG*)(img + (desc->OriginalFirstThunk
+                                                            ? desc->OriginalFirstThunk : desc->FirstThunk));
+                ULONGLONG* iat = (ULONGLONG*)(img + desc->FirstThunk);
+                for (int i = 0; origThunk[i]; i++) {
+                    ULONGLONG val = 0;
+                    if (origThunk[i] & 0x8000000000000000ULL) {
+                        val = (ULONGLONG)(ULONG_PTR)GetProcAddress(mod, (LPCSTR)(origThunk[i] & 0xFFFF));
+                    } else {
+                        IMAGE_IMPORT_BY_NAME* ibn = (IMAGE_IMPORT_BY_NAME*)(img + origThunk[i]);
+                        val = (ULONGLONG)(ULONG_PTR)GetProcAddress(mod, ibn->Name);
+                    }
+                    if (!val) { if (verbose) LogInject("pid %lu: 导入解析失败: %s", pid, dllName); goto fail; }
+                    if (!WriteProcessMemory(proc, base + desc->FirstThunk + i * 8, &val, 8, nullptr)) goto fail;
+                }
+                off += sizeof(IMAGE_IMPORT_DESCRIPTOR);
+            }
+        }
+
+        // 4.5 MinGW 伪重定位
+        if (!ApplyPseudoRelocs(proc, base, img, imgFile, imgSize)) goto fail;
+
+        // 5. 入口存根: mov rcx,base; mov edx,1; xor r8,r8; mov rax,entry; jmp rax
+        ULONGLONG entry = (ULONGLONG)base + nt->OptionalHeader.AddressOfEntryPoint;
+        {
+            BYTE stub[64];
+            size_t sn = 0;
+            stub[sn++] = 0x48; stub[sn++] = 0xB9;
+            memcpy(stub + sn, &base, 8);  sn += 8;
+            stub[sn++] = 0xBA; stub[sn++] = 0x01; stub[sn++] = 0x00;
+            stub[sn++] = 0x00; stub[sn++] = 0x00;
+            stub[sn++] = 0x4D; stub[sn++] = 0x31; stub[sn++] = 0xC0;
+            stub[sn++] = 0x48; stub[sn++] = 0xB8;
+            memcpy(stub + sn, &entry, 8); sn += 8;
+            stub[sn++] = 0xFF; stub[sn++] = 0xE0;
+
+            stubAddr = VirtualAllocEx(proc, nullptr, sizeof(stub),
+                                      MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+            if (!stubAddr) goto fail;
+            if (!WriteProcessMemory(proc, stubAddr, stub, sn, nullptr)) goto fail;
+            FlushInstructionCache(proc, stubAddr, (SIZE_T)sn);
+        }
+        FlushInstructionCache(proc, base, sizeOfImage);
+
+        // 5.5 按节区属性设保护 (代码 RX / 数据 RW), 否则 NX 杀掉线程
+        for (int i = 0; i < nt->FileHeader.NumberOfSections; i++) {
+            DWORD ch = sec[i].Characteristics;
+            DWORD prot = PAGE_READONLY;
+            if (ch & IMAGE_SCN_MEM_EXECUTE) prot = PAGE_EXECUTE_READ;
+            if (ch & IMAGE_SCN_MEM_WRITE)   prot = (ch & IMAGE_SCN_MEM_EXECUTE)
+                                                   ? PAGE_EXECUTE_READWRITE : PAGE_READWRITE;
+            DWORD old = 0;
+            VirtualProtectEx(proc, base + sec[i].VirtualAddress,
+                             sec[i].Misc.VirtualSize ? sec[i].Misc.VirtualSize : 1,
+                             prot, &old);
+        }
+
+        // 6. 执行 DllMain
+        th = CreateRemoteThread(proc, nullptr, 0, (LPTHREAD_START_ROUTINE)stubAddr, nullptr, 0, nullptr);
+        if (!th) { if (verbose) LogInject("pid %lu: CreateRemoteThread FAILED err=%lu", pid, GetLastError()); goto fail; }
+        DWORD wait = WaitForSingleObject(th, 10000);
+        DWORD exitCode = 0;
+        GetExitCodeThread(th, &exitCode);
+        CloseHandle(th);
+        th = nullptr;
+        ok = (wait != WAIT_TIMEOUT) && exitCode == 1;
+        if (verbose) LogInject("pid %lu: DllMain 返回 %lu (wait=%lu)", pid, exitCode, wait);
+        if (!ok && HasHealthyShm(pid)) ok = true;   // DllMain 已就绪但线程信号异常
     }
-    if (!WriteProcessMemory(hp, mem, path, len, nullptr)) {
-        if (verbose) LogInject("pid %lu: WriteProcessMemory FAILED err=%lu", pid, GetLastError());
-        VirtualFreeEx(hp, mem, 0, MEM_RELEASE);
-        CloseHandle(hp);
-        return false;
-    }
 
-    HMODULE k32 = GetModuleHandleA("kernel32.dll");
-    auto pLoadLibraryA = (LPTHREAD_START_ROUTINE)GetProcAddress(k32, "LoadLibraryA");
-    HANDLE ht = CreateRemoteThread(hp, nullptr, 0, pLoadLibraryA, mem, 0, nullptr);
-    if (!ht) {
-        if (verbose) LogInject("pid %lu: CreateRemoteThread FAILED err=%lu (anti-injection?)",
-                               pid, GetLastError());
-        VirtualFreeEx(hp, mem, 0, MEM_RELEASE);
-        CloseHandle(hp);
-        return false;
-    }
-
-    DWORD wait = WaitForSingleObject(ht, 3000);
-    DWORD ret = 0;
-    GetExitCodeThread(ht, &ret);
-    CloseHandle(ht);
-    VirtualFreeEx(hp, mem, 0, MEM_RELEASE);
-    CloseHandle(hp);
-
-    if (verbose)
-        LogInject("pid %lu: remote LoadLibraryA returned 0x%p (wait=%lu)",
-                  pid, (void*)(uintptr_t)ret, wait);
-    bool ok = (wait != WAIT_TIMEOUT) && ret != 0;
-    // timed out? the module may still have loaded - verify to avoid re-injection
-    // (module check + shared-memory health: the DLL PEB-unlinks itself, so the
-    // module may be invisible while the health channel is alive)
-    if (!ok && (ProcessHasModule(pid, L"MCCombatStatusJni.dll") || HasHealthyShm(pid)))
-        ok = true;
+fail:
+    if (th) CloseHandle(th);
+    if (stubAddr) VirtualFreeEx(proc, stubAddr, 0, MEM_RELEASE);
+    if (!ok && base) VirtualFreeEx(proc, base, 0, MEM_RELEASE);
+    if (work) VirtualFree(work, 0, MEM_RELEASE);
+    CloseHandle(proc);
     return ok;
 }
 
@@ -612,15 +837,14 @@ void StartInjectorThread()
 {
     std::thread([]() {
         EnableDebugPrivilege();
-        ExtractEmbeddedDll();   // ensure the temp copy exists for injection
 
-        char dllPath[MAX_PATH] = {};
-        if (!ResolveDllPath(dllPath, MAX_PATH)) {
-            // retry: the user may drop the DLL next to the exe later
-            for (;;) {
-                Sleep(1000);
-                if (ResolveDllPath(dllPath, MAX_PATH)) break;
-            }
+        // V67: 载荷只存在于内存 (内嵌加密资源 / 可选 sidecar 明文文件),
+        // 不解出到磁盘、不 LoadLibrary —— 手动映射注入。
+        size_t payloadLen = 0;
+        BYTE* payload = LoadPayload(&payloadLen);
+        while (!payload) {
+            Sleep(1000);
+            payload = LoadPayload(&payloadLen);
         }
 
         std::set<DWORD> injected;    // PIDs we have already taken care of
@@ -628,7 +852,8 @@ void StartInjectorThread()
         std::map<DWORD, int> failLog; // per-PID injection failure counter (backoff + throttle)
 
         HANDLE wake = GateWakeEvent();
-        LogInject("=== injector started, dll=%s (idle until feature enabled) ===", dllPath);
+        LogInject("=== injector started, payload=%zu bytes, manual map (idle until feature enabled) ===",
+                  payloadLen);
 
         DWORD backoffMs = 1000;   // 1s -> 2s -> 4s ... capped at 30s on repeated failures
         for (;;) {
@@ -683,7 +908,7 @@ void StartInjectorThread()
                     if (verbose)
                         LogInject("pid %lu (%ls): injecting (attempt %d)...",
                                   pe.th32ProcessID, nm, failC);
-                    if (InjectDll(pe.th32ProcessID, dllPath, verbose)) {
+                    if (ManualMapInject(pe.th32ProcessID, payload, payloadLen, verbose)) {
                         injected.insert(pe.th32ProcessID);
                         skipLog.erase(pe.th32ProcessID);
                         failLog.erase(pe.th32ProcessID);
