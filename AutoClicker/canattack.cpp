@@ -594,7 +594,9 @@ static bool ApplyPseudoRelocs(HANDLE proc, BYTE* base, const BYTE* workImg,
     return true;
 }
 
-static bool ManualMapInject(DWORD pid, const BYTE* imgFile, size_t imgSize, bool verbose)
+static bool ManualMapInject(DWORD pid, const BYTE* imgFile, size_t imgSize, bool verbose,
+                            ULONGLONG* outBase = nullptr, ULONGLONG* outEntry = nullptr,
+                            bool runEntry = true)
 {
     HANDLE proc = OpenProcess(PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION |
                               PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ,
@@ -785,17 +787,25 @@ static bool ManualMapInject(DWORD pid, const BYTE* imgFile, size_t imgSize, bool
                              prot, &old);
         }
 
-        // 6. 执行 DllMain
-        th = CreateRemoteThread(proc, nullptr, 0, (LPTHREAD_START_ROUTINE)stubAddr, nullptr, 0, nullptr);
-        if (!th) { if (verbose) LogInject("pid %lu: CreateRemoteThread FAILED err=%lu", pid, GetLastError()); goto fail; }
-        DWORD wait = WaitForSingleObject(th, 10000);
-        DWORD exitCode = 0;
-        GetExitCodeThread(th, &exitCode);
-        CloseHandle(th);
-        th = nullptr;
-        ok = (wait != WAIT_TIMEOUT) && exitCode == 1;
-        if (verbose) LogInject("pid %lu: DllMain 返回 %lu (wait=%lu)", pid, exitCode, wait);
-        if (!ok && HasHealthyShm(pid)) ok = true;   // DllMain 已就绪但线程信号异常
+        // 6. 执行 DllMain (runEntry=false 时仅返回基址/入口, 由线程劫持执行)
+        if (runEntry) {
+            th = CreateRemoteThread(proc, nullptr, 0, (LPTHREAD_START_ROUTINE)stubAddr, nullptr, 0, nullptr);
+            if (!th) { if (verbose) LogInject("pid %lu: CreateRemoteThread FAILED err=%lu", pid, GetLastError()); goto fail; }
+            DWORD wait = WaitForSingleObject(th, 10000);
+            DWORD exitCode = 0;
+            GetExitCodeThread(th, &exitCode);
+            CloseHandle(th);
+            th = nullptr;
+            ok = (wait != WAIT_TIMEOUT) && exitCode == 1;
+            if (verbose) LogInject("pid %lu: DllMain 返回 %lu (wait=%lu)", pid, exitCode, wait);
+            if (!ok && HasHealthyShm(pid)) ok = true;   // DllMain 已就绪但线程信号异常
+        } else {
+            ok = true;   // 只映射, 不执行
+        }
+        if (ok) {
+            if (outBase)  *outBase  = (ULONGLONG)base;
+            if (outEntry) *outEntry = (ULONGLONG)base + nt->OptionalHeader.AddressOfEntryPoint;
+        }
     }
 
 fail:
@@ -805,6 +815,144 @@ fail:
     if (work) VirtualFree(work, 0, MEM_RELEASE);
     CloseHandle(proc);
     return ok;
+}
+
+// ============================================================
+//  V68: 线程劫持执行 DllMain —— 不创建新线程 (无 NtCreateThreadEx 痕迹)。
+//  挂起游戏窗口线程, 完整保存现场 (GPR/RFLAGS/XMM), 执行 DllMain,
+//  完整恢复现场后跳回原 RIP。壳代码写在映像头页 0x800。
+// ============================================================
+static size_t StubPut(BYTE* p, const BYTE* b, size_t n) { if (p) memcpy(p, b, n); return n; }
+static size_t StubPutImm64(BYTE* p, ULONGLONG v) { if (p) memcpy(p, &v, 8); return 8; }
+
+static size_t BuildHijackStub(BYTE* out, ULONGLONG base, ULONGLONG entry, ULONGLONG origRip)
+{
+    size_t n = 0;
+    static const BYTE save1[] = {
+        0x55,
+        0x50, 0x51, 0x52, 0x53, 0x56, 0x57,
+        0x41,0x50, 0x41,0x51, 0x41,0x52, 0x41,0x53,
+        0x41,0x54, 0x41,0x55, 0x41,0x56, 0x41,0x57,
+        0x9C,
+    };
+    n += StubPut(out ? out + n : nullptr, save1, sizeof(save1));
+    static const BYTE sub1[] = { 0x48,0x81,0xEC, 0x00,0x01,0x00,0x00 };
+    n += StubPut(out ? out + n : nullptr, sub1, sizeof(sub1));
+    for (int i = 0; i < 16; i++) {
+        BYTE b[8]; size_t k = 0;
+        b[k++] = 0xF3;
+        if (i >= 8) b[k++] = 0x44;
+        b[k++] = 0x0F; b[k++] = 0x7F;
+        b[k++] = (BYTE)(0x44 | ((i & 7) << 3));
+        b[k++] = 0x24; b[k++] = (BYTE)(i * 16);
+        n += StubPut(out ? out + n : nullptr, b, k);
+    }
+    static const BYTE anchor[] = { 0x48,0x89,0xE3 };
+    n += StubPut(out ? out + n : nullptr, anchor, sizeof(anchor));
+    static const BYTE align1[] = { 0x48,0x83,0xEC,0x20, 0x48,0x83,0xE4,0xF0 };
+    n += StubPut(out ? out + n : nullptr, align1, sizeof(align1));
+    n += StubPut(out ? out + n : nullptr, (const BYTE*)"\x48\xB9", 2);
+    n += StubPutImm64(out ? out + n : nullptr, base);
+    static const BYTE args1[] = { 0xBA,0x01,0x00,0x00,0x00, 0x45,0x31,0xC0, 0x48,0xB8 };
+    n += StubPut(out ? out + n : nullptr, args1, sizeof(args1));
+    n += StubPutImm64(out ? out + n : nullptr, entry);
+    static const BYTE call1[] = { 0xFF,0xD0, 0x48,0x89,0xDC };
+    n += StubPut(out ? out + n : nullptr, call1, sizeof(call1));
+    for (int i = 0; i < 16; i++) {
+        BYTE b[8]; size_t k = 0;
+        b[k++] = 0xF3;
+        if (i >= 8) b[k++] = 0x44;
+        b[k++] = 0x0F; b[k++] = 0x6F;
+        b[k++] = (BYTE)(0x44 | ((i & 7) << 3));
+        b[k++] = 0x24; b[k++] = (BYTE)(i * 16);
+        n += StubPut(out ? out + n : nullptr, b, k);
+    }
+    static const BYTE add1[] = { 0x48,0x81,0xC4, 0x00,0x01,0x00,0x00 };
+    n += StubPut(out ? out + n : nullptr, add1, sizeof(add1));
+    static const BYTE restore1[] = {
+        0x9D,
+        0x41,0x5F, 0x41,0x5E, 0x41,0x5D, 0x41,0x5C,
+        0x41,0x5B, 0x41,0x5A, 0x41,0x59, 0x41,0x58,
+        0x5F, 0x5E, 0x5B, 0x5A, 0x59, 0x58, 0x5D,
+    };
+    n += StubPut(out ? out + n : nullptr, restore1, sizeof(restore1));
+    static const BYTE ret1[] = { 0xFF,0x35, 0x02,0x00,0x00,0x00, 0xC3, 0x90 };
+    n += StubPut(out ? out + n : nullptr, ret1, sizeof(ret1));
+    n += StubPutImm64(out ? out + n : nullptr, origRip);
+    return n;
+}
+
+static DWORD FindWindowThread(DWORD pid)
+{
+    struct Ctx { DWORD pid; DWORD tid; };
+    Ctx c = { pid, 0 };
+    EnumWindows([](HWND h, LPARAM lp) -> BOOL {
+        Ctx* x = (Ctx*)lp;
+        DWORD p = 0;
+        GetWindowThreadProcessId(h, &p);
+        if (p == x->pid && IsWindowVisible(h)) {
+            x->tid = GetWindowThreadProcessId(h, nullptr);
+            return FALSE;
+        }
+        return TRUE;
+    }, (LPARAM)&c);
+    return c.tid;
+}
+
+static bool HijackRunDll(DWORD pid, ULONGLONG base, ULONGLONG entry, bool verbose)
+{
+    HANDLE proc = OpenProcess(PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_QUERY_INFORMATION,
+                              FALSE, pid);
+    if (!proc) return false;
+    DWORD tid = FindWindowThread(pid);
+    if (!tid) { CloseHandle(proc); return false; }
+    HANDLE th = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT |
+                           THREAD_SET_CONTEXT | THREAD_QUERY_LIMITED_INFORMATION,
+                           FALSE, tid);
+    if (!th) { CloseHandle(proc); return false; }
+    CONTEXT ctx = {};
+    ctx.ContextFlags = CONTEXT_FULL;
+    if (SuspendThread(th) == (DWORD)-1) { CloseHandle(th); CloseHandle(proc); return false; }
+    if (!GetThreadContext(th, &ctx)) { ResumeThread(th); CloseHandle(th); CloseHandle(proc); return false; }
+
+    ULONGLONG stubAddr = base + 0x800;
+    BYTE stub[600];
+    size_t n = BuildHijackStub(stub, base, entry, ctx.Rip);
+    if (!WriteProcessMemory(proc, (void*)stubAddr, stub, n, nullptr)) {
+        ResumeThread(th); CloseHandle(th); CloseHandle(proc); return false;
+    }
+    FlushInstructionCache(proc, (void*)stubAddr, n);
+    {
+        DWORD oldp = 0;
+        VirtualProtectEx(proc, (void*)base, 0x1000, PAGE_EXECUTE_READWRITE, &oldp);
+    }
+
+    CONTEXT newCtx = ctx;
+    newCtx.Rip = stubAddr;
+    newCtx.EFlags &= ~0x100;
+    if (!SetThreadContext(th, &newCtx)) { ResumeThread(th); CloseHandle(th); CloseHandle(proc); return false; }
+    ResumeThread(th);
+
+    bool done = false;
+    for (int i = 0; i < 100; i++) {
+        Sleep(50);
+        if (HasHealthyShm(pid)) { done = true; break; }
+    }
+    if (!done) {
+        SuspendThread(th);
+        SetThreadContext(th, &ctx);
+        ResumeThread(th);
+        CloseHandle(th);
+        CloseHandle(proc);
+        return false;
+    }
+    Sleep(150);
+    DWORD oldp = 0;
+    VirtualProtectEx(proc, (void*)base, 0x1000, PAGE_READONLY, &oldp);
+    if (verbose) LogInject("pid %lu: 线程劫持执行 DllMain 成功 (tid %lu)", pid, tid);
+    CloseHandle(th);
+    CloseHandle(proc);
+    return true;
 }
 
 // ============================================================
@@ -908,7 +1056,49 @@ void StartInjectorThread()
                     if (verbose)
                         LogInject("pid %lu (%ls): injecting (attempt %d)...",
                                   pe.th32ProcessID, nm, failC);
-                    if (ManualMapInject(pe.th32ProcessID, payload, payloadLen, verbose)) {
+                    // V68: 先手动映射 (不执行) + 线程劫持执行 DllMain (不创建
+                    // 新线程); 劫持不可用时回退传统远程线程执行入口。
+                    ULONGLONG mBase = 0, mEntry = 0;
+                    bool injectedOk = ManualMapInject(pe.th32ProcessID, payload, payloadLen,
+                                                      verbose, &mBase, &mEntry, false);
+                    if (injectedOk) {
+                        injectedOk = HijackRunDll(pe.th32ProcessID, mBase, mEntry, verbose);
+                        if (!injectedOk) {
+                            // 映像已就位: 直接远程线程跑入口 (g_attached 幂等防重)
+                            BYTE st2[64];
+                            size_t sn2 = 0;
+                            st2[sn2++] = 0x48; st2[sn2++] = 0xB9;
+                            memcpy(st2 + sn2, &mBase, 8); sn2 += 8;
+                            st2[sn2++] = 0xBA; st2[sn2++] = 0x01; st2[sn2++] = 0x00;
+                            st2[sn2++] = 0x00; st2[sn2++] = 0x00;
+                            st2[sn2++] = 0x4D; st2[sn2++] = 0x31; st2[sn2++] = 0xC0;
+                            st2[sn2++] = 0x48; st2[sn2++] = 0xB8;
+                            memcpy(st2 + sn2, &mEntry, 8); sn2 += 8;
+                            st2[sn2++] = 0xFF; st2[sn2++] = 0xE0;
+                            HANDLE hp2 = OpenProcess(PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION |
+                                                     PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ,
+                                                     FALSE, pe.th32ProcessID);
+                            if (hp2) {
+                                void* stA = VirtualAllocEx(hp2, nullptr, 64,
+                                                           MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+                                if (stA) {
+                                    WriteProcessMemory(hp2, stA, st2, sn2, nullptr);
+                                    FlushInstructionCache(hp2, stA, sn2);
+                                    HANDLE ht2 = CreateRemoteThread(hp2, nullptr, 0,
+                                                                    (LPTHREAD_START_ROUTINE)stA, nullptr, 0, nullptr);
+                                    if (ht2) {
+                                        DWORD ec2 = 0;
+                                        WaitForSingleObject(ht2, 10000);
+                                        GetExitCodeThread(ht2, &ec2);
+                                        CloseHandle(ht2);
+                                        injectedOk = (ec2 == 1) || HasHealthyShm(pe.th32ProcessID);
+                                    }
+                                }
+                                CloseHandle(hp2);
+                            }
+                        }
+                    }
+                    if (injectedOk) {
                         injected.insert(pe.th32ProcessID);
                         skipLog.erase(pe.th32ProcessID);
                         failLog.erase(pe.th32ProcessID);
