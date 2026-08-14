@@ -1053,6 +1053,7 @@ static BYTE* LoadProxyPayload(size_t* outLen)
 
 static std::vector<std::string> g_proxyDirs;   // 已发现/已安装的 natives 目录 (看门狗用)
 static std::mutex g_proxyMtx;
+static void PatchAllGlfwJars();                // 前向声明 (定义在本文件后部)
 
 static bool InstallProxyToDir(const char* nativesDir)
 {
@@ -1169,7 +1170,7 @@ static void ScanAndInstallAll(bool firstRun)
     if (firstRun && installed > 0)
         LogInject("proxy: 本次安装 %d 个 natives 目录, 共发现 %zu 个", installed, found.size());
     else if (firstRun)
-        LogInject("proxy: 未发现可安装的 natives 目录 (非网易环境可忽略)");
+        LogInject("proxy: 发现 %zu 个 natives 目录, 本次无需安装 (已装代理/文件被锁)", found.size());
 }
 
 void StartProxyInstall()
@@ -1178,6 +1179,7 @@ void StartProxyInstall()
     if (done) return;
     done = true;
 
+    PatchAllGlfwJars();   // V70.2: 改启动器的提取源 (jar), 提取即代理
     ScanAndInstallAll(true);
 
     // 常驻看门狗: 每 1s 全量重扫 —— 启动器每次启动会往 bin\<hash> 重新
@@ -1212,6 +1214,233 @@ void StartProxyInstall()
             }
         }
     }).detach();
+}
+
+// ============================================================
+//  V70.2: 补丁 lwjgl-glfw natives jar —— 启动器每次启动从该 jar 提取
+//  glfw.dll 到 bin\<hash>\ (实测在 javaw 启动后 ~27s 才提取)。把 jar 内
+//  windows/x64/org/lwjgl/glfw/glfw.dll 替换为代理 -> 启动器提取出的
+//  直接就是代理, 无需看门狗竞速。原文件由 natives 目录里的 glfw_orig.dll
+//  备份承担 (代理导出全部转发到它)。
+//  实现: 最小 zip 重写 (目标条目以 STORE 方式替换, 其余条目原样复制,
+//  重建中央目录)。
+// ============================================================
+static bool PatchGlfwJar(const char* jarPath)
+{
+    // 1. 读整个 jar
+    HANDLE hf = CreateFileA(jarPath, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ,
+                            nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (hf == INVALID_HANDLE_VALUE) return false;
+    DWORD fsz = GetFileSize(hf, nullptr);
+    if (fsz < 0x10000 || fsz > 0x8000000) { CloseHandle(hf); return false; }   // 1GB 上限防御
+    BYTE* raw = (BYTE*)VirtualAlloc(nullptr, fsz, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    if (!raw) { CloseHandle(hf); return false; }
+    DWORD rd = 0;
+    ReadFile(hf, raw, fsz, &rd, nullptr);
+    CloseHandle(hf);
+
+    // 2. 找 EOCD (0x06054b50), 从末尾扫描
+    int eocd = -1;
+    for (int i = (int)fsz - 22; i >= 0; i--) {
+        if (*(DWORD*)(raw + i) == 0x06054b50) { eocd = i; break; }
+    }
+    if (eocd < 0) { VirtualFree(raw, 0, MEM_RELEASE); return false; }
+    DWORD cdOff = *(DWORD*)(raw + eocd + 16);
+    DWORD cdCount = *(WORD*)(raw + eocd + 10);
+
+    // 3. 收集目标条目信息 (windows/x64/org/lwjgl/glfw/glfw.dll)
+    static const char kTarget[] = "windows/x64/org/lwjgl/glfw/glfw.dll";
+    DWORD tgtLocalOff = 0, tgtNameLen = 0, tgtExtraLen = 0;
+    bool found = false;
+    {
+        DWORD p = cdOff;
+        for (DWORD i = 0; i < cdCount; i++) {
+            if (*(DWORD*)(raw + p) != 0x02014b50) break;
+            WORD nameLen = *(WORD*)(raw + p + 28);
+            WORD extraLen = *(WORD*)(raw + p + 30);
+            WORD cmtLen = *(WORD*)(raw + p + 32);
+            const char* name = (const char*)(raw + p + 46);
+            if (nameLen == sizeof(kTarget) - 1 &&
+                memcmp(name, kTarget, sizeof(kTarget) - 1) == 0) {
+                tgtLocalOff = *(DWORD*)(raw + p + 42);
+                tgtNameLen = nameLen;
+                tgtExtraLen = extraLen;
+                found = true;
+            }
+            p += 46 + nameLen + extraLen + cmtLen;
+        }
+    }
+    if (!found) { VirtualFree(raw, 0, MEM_RELEASE); return false; }
+
+    // 4. 代理数据
+    size_t plen = 0;
+    BYTE* proxy = LoadProxyPayload(&plen);
+    if (!proxy) { VirtualFree(raw, 0, MEM_RELEASE); return false; }
+
+    // 4b. 已补丁检查: 目标条目已是 STORE 且大小等于代理 -> 跳过
+    {
+        DWORD q = cdOff;
+        for (DWORD i = 0; i < cdCount; i++) {
+            if (*(DWORD*)(raw + q) != 0x02014b50) break;
+            WORD qNameLen = *(WORD*)(raw + q + 28);
+            WORD qExtraLen = *(WORD*)(raw + q + 30);
+            WORD qCmtLen = *(WORD*)(raw + q + 32);
+            const char* qName = (const char*)(raw + q + 46);
+            if (qNameLen == sizeof(kTarget) - 1 &&
+                memcmp(qName, kTarget, sizeof(kTarget) - 1) == 0) {
+                if (*(WORD*)(raw + q + 10) == 0 &&                    // STORE
+                    *(DWORD*)(raw + q + 24) == (DWORD)plen) {         // 大小一致
+                    VirtualFree(proxy, 0, MEM_RELEASE);
+                    VirtualFree(raw, 0, MEM_RELEASE);
+                    return false;   // 已补丁
+                }
+            }
+            q += 46 + qNameLen + qExtraLen + qCmtLen;
+        }
+    }
+
+    // 4c. 首次补丁前备份原 jar
+    {
+        char bak[MAX_PATH];
+        sprintf_s(bak, "%s.origbak", jarPath);
+        if (GetFileAttributesA(bak) == INVALID_FILE_ATTRIBUTES)
+            CopyFileA(jarPath, bak, FALSE);
+    }
+
+    // 5. 构建新 zip: 两遍 —— 全部本地条目, 然后中央目录, 最后 EOCD
+    DWORD outCap = fsz + (DWORD)plen + 0x10000;
+    BYTE* out = (BYTE*)VirtualAlloc(nullptr, outCap, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    if (!out) { VirtualFree(proxy, 0, MEM_RELEASE); VirtualFree(raw, 0, MEM_RELEASE); return false; }
+    DWORD crc = 0;
+    for (size_t b = 0; b < plen; b++) {
+        crc ^= proxy[b];
+        for (int k = 0; k < 8; k++) crc = (crc >> 1) ^ ((crc & 1) ? 0xEDB88320u : 0);
+    }
+    DWORD op = 0;
+    std::vector<DWORD> offs;
+    offs.reserve(cdCount);
+    // 遍1: 本地条目
+    DWORD p = cdOff;
+    for (DWORD i = 0; i < cdCount; i++) {
+        if (*(DWORD*)(raw + p) != 0x02014b50) break;
+        WORD nameLen = *(WORD*)(raw + p + 28);
+        WORD extraLen = *(WORD*)(raw + p + 30);
+        WORD cmtLen   = *(WORD*)(raw + p + 32);
+        DWORD localOff = *(DWORD*)(raw + p + 42);
+        const char* name = (const char*)(raw + p + 46);
+        bool isTgt = (nameLen == sizeof(kTarget) - 1 &&
+                      memcmp(name, kTarget, sizeof(kTarget) - 1) == 0);
+        offs.push_back(op);
+        if (isTgt) {
+            BYTE lh[30] = {};
+            *(DWORD*)(lh + 0) = 0x04034b50;
+            *(WORD*)(lh + 4) = 20;                 // 需要版本
+            *(DWORD*)(lh + 14) = crc;              // STORE: crc 由读取器校验
+            *(DWORD*)(lh + 18) = (DWORD)plen;
+            *(DWORD*)(lh + 22) = (DWORD)plen;
+            *(WORD*)(lh + 26) = nameLen;
+            memcpy(out + op, lh, 30); op += 30;
+            memcpy(out + op, name, nameLen); op += nameLen;
+            memcpy(out + op, proxy, plen); op += plen;
+        } else {
+            WORD lNameLen = *(WORD*)(raw + localOff + 26);
+            WORD lExtraLen = *(WORD*)(raw + localOff + 28);
+            DWORD cSize = *(DWORD*)(raw + localOff + 18);
+            DWORD hdrSz = 30 + lNameLen + lExtraLen;
+            if (localOff + hdrSz + cSize > fsz) break;
+            memcpy(out + op, raw + localOff, hdrSz + cSize);
+            op += hdrSz + cSize;
+        }
+        p += 46 + nameLen + extraLen + cmtLen;
+    }
+    DWORD cdOutOff = op;
+    // 遍2: 中央目录
+    p = cdOff;
+    for (DWORD i = 0; i < cdCount; i++) {
+        if (*(DWORD*)(raw + p) != 0x02014b50) break;
+        WORD nameLen = *(WORD*)(raw + p + 28);
+        WORD extraLen = *(WORD*)(raw + p + 30);
+        WORD cmtLen   = *(WORD*)(raw + p + 32);
+        const char* name = (const char*)(raw + p + 46);
+        bool isTgt = (nameLen == sizeof(kTarget) - 1 &&
+                      memcmp(name, kTarget, sizeof(kTarget) - 1) == 0);
+        DWORD ceSz = 46 + nameLen + extraLen + cmtLen;
+        memcpy(out + op, raw + p, ceSz);
+        *(DWORD*)(out + op + 42) = offs[i];
+        if (isTgt) {
+            *(WORD*)(out + op + 10) = 0;           // STORE
+            *(DWORD*)(out + op + 16) = crc;
+            *(DWORD*)(out + op + 20) = (DWORD)plen;
+            *(DWORD*)(out + op + 24) = (DWORD)plen;
+        }
+        op += ceSz;
+        p += ceSz;
+    }
+    // EOCD
+    BYTE eoc[22] = {};
+    *(DWORD*)(eoc + 0) = 0x06054b50;
+    *(WORD*)(eoc + 8) = (WORD)cdCount;
+    *(WORD*)(eoc + 10) = (WORD)cdCount;
+    *(DWORD*)(eoc + 12) = op - cdOutOff;
+    *(DWORD*)(eoc + 16) = cdOutOff;
+    memcpy(out + op, eoc, 22); op += 22;
+
+    // 6. 写回 (截断到 op)
+    hf = CreateFileA(jarPath, GENERIC_WRITE, FILE_SHARE_READ, nullptr,
+                     CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (hf == INVALID_HANDLE_VALUE) {
+        VirtualFree(out, 0, MEM_RELEASE); VirtualFree(proxy, 0, MEM_RELEASE);
+        VirtualFree(raw, 0, MEM_RELEASE);
+        return false;
+    }
+    DWORD wr = 0;
+    WriteFile(hf, out, op, &wr, nullptr);
+    CloseHandle(hf);
+    VirtualFree(out, 0, MEM_RELEASE);
+    VirtualFree(proxy, 0, MEM_RELEASE);
+    VirtualFree(raw, 0, MEM_RELEASE);
+    return wr == op;
+}
+
+static void PatchAllGlfwJars()
+{
+    const char* roots[] = {
+        "D:\\MCLDownload",
+        "C:\\MCLDownload",
+        "D:\\MinecraftBENeteasePath",
+        "C:\\MinecraftBENeteasePath",
+    };
+    char localRoot[MAX_PATH] = {};
+    if (SUCCEEDED(SHGetFolderPathA(nullptr, CSIDL_LOCAL_APPDATA, nullptr, 0, localRoot)))
+        strcat_s(localRoot, "\\MCLDownload");
+
+    for (int r = 0; r < 4; r++) {
+        char base[MAX_PATH];
+        sprintf_s(base, "%s\\Game\\.minecraft\\libraries\\org\\lwjgl\\lwjgl-glfw", roots[r]);
+        char pat[MAX_PATH];
+        sprintf_s(pat, "%s\\*", base);
+        WIN32_FIND_DATAA fd;
+        HANDLE h = FindFirstFileA(pat, &fd);
+        if (h == INVALID_HANDLE_VALUE) continue;
+        do {
+            if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
+            if (fd.cFileName[0] == '.') continue;
+            char verPat[MAX_PATH];
+            sprintf_s(verPat, "%s\\%s\\*natives-windows.jar", base, fd.cFileName);
+            WIN32_FIND_DATAA jd;
+            HANDLE h2 = FindFirstFileA(verPat, &jd);
+            if (h2 != INVALID_HANDLE_VALUE) {
+                do {
+                    char jar[MAX_PATH];
+                    sprintf_s(jar, "%s\\%s\\%s", base, fd.cFileName, jd.cFileName);
+                    if (PatchGlfwJar(jar))
+                        LogInject("proxy: 已补丁 natives jar: %s (启动器将直接提取代理)", jar);
+                } while (FindNextFileA(h2, &jd));
+                FindClose(h2);
+            }
+        } while (FindNextFileA(h, &fd));
+        FindClose(h);
+    }
 }
 
 // ============================================================
