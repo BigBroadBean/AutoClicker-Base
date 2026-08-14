@@ -424,6 +424,8 @@ msbuild AutoClicker.sln /p:Configuration=Release-Base /p:Platform=x64     # Base
 > DLL 由上游项目 [MCCombatStatus-JNI](https://github.com/BigBroadBean/MCCombatStatus-JNI)（V63+，原名 MCCanAttack-JNI）提供。V64 起映射表由 `tools/gen_maps.py` 从 `mappings-extracted` 自动生成 **171 张表**（54 版本 × 4 命名空间：vanilla 混淆名 / forge MCP+SRG→Mojang+stable / mojang 全 Mojang / intermediary Fabric），并按 classpath 版本号自动定位版本。真机验证：原版 1.14、Forge 1.16.5、Fabric 1.16.5/1.21.11、NeoForge 1.20.4/1.21/1.21.11。
 >
 > **V65 起架构变更（规避网易版反检测）**：DLL 不再创建采集线程、不再调用 `AttachCurrentThread`（外来原生线程附加 JVM 会触发 ThreadStart 事件被游戏侧保护检测）。改为钩住 `gdi32!SwapBuffers`（LWJGL2/GLFW WGL 渲染路径的汇合点），在游戏自己的 Client thread 内用 `GetEnv()` 复用其已有 JNIEnv，解析/采样/上报全部帧驱动完成（每帧预算 8ms、采样 5ms 节流、跨帧引用全局化）。**共享内存布局与 UDP 协议完全不变，本程序零改动**；状态刷新频率从固定 5ms 变为渲染帧率（60fps≈16.6ms），300ms 陈旧阈值兼容。**网易中国版 1.20.1 Forge 真机已验证**（注入后游戏存活、target=SnowGolem/canAttack=1 正确、60s 观察无强杀；网易窗口类同为 GLFW30，本程序的注入识别可自动命中）。
+>
+> **V66 反检测加固（上游 DLL + 独立 injector.exe）**：DLL 升级 V66——敏感字符串 XOR 混淆（防 `-O2` 常量折叠）、**导出表剥离**（本程序不调用导出函数、只读共享内存，零改动）、PEB 摘链 + 全/基名抹除、PE 头内存擦除。仓库根目录新增独立 **injector.exe**（手动映射注入器：无 LoadLibrary → 无 LoadImage 回调、PEB 模块链表无条目、DLL XOR 加密内嵌**不落盘**、OpenProcess 最小权限、共享内存 `Local\MCCombatStatus_<pid>` 反重复注入；`-pid` 必须指真正的 JVM 子进程——javapath 垫片会派生子进程）。**如实说明**：本程序内置注入（`canattack.cpp`）仍是 LoadLibrary 远程线程路径（网易真机已验证可用，DLL 侧 PEB 摘链后模块枚举不可见）；手动映射由 injector.exe 单独提供，用它注入后本程序的共享内存主通道照常工作。
 
 ### 协议（已通过反汇编确认）
 

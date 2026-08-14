@@ -173,6 +173,7 @@ void StartCanAttackMonitor()
 // so this replaces UDP as the primary channel; the UDP monitor above
 // only serves old DLL builds.
 static void LogInject(const char* fmt, ...);   // defined in the injector section
+static bool HasHealthyShm(DWORD pid);          // defined in the injector section
 
 static constexpr SIZE_T kShmOffMagic     = 0;
 static constexpr SIZE_T kShmOffVersion   = 4;
@@ -574,13 +575,39 @@ static bool InjectDll(DWORD pid, const char* path, bool verbose)
                   pid, (void*)(uintptr_t)ret, wait);
     bool ok = (wait != WAIT_TIMEOUT) && ret != 0;
     // timed out? the module may still have loaded - verify to avoid re-injection
-    if (!ok && ProcessHasModule(pid, L"MCCombatStatusJni.dll")) ok = true;
+    // (module check + shared-memory health: the DLL PEB-unlinks itself, so the
+    // module may be invisible while the health channel is alive)
+    if (!ok && (ProcessHasModule(pid, L"MCCombatStatusJni.dll") || HasHealthyShm(pid)))
+        ok = true;
     return ok;
 }
 
 // ============================================================
 //  injector thread: find every not-yet-injected MC Java process
 // ============================================================
+
+// V66: the DLL PEB-unlinks itself (and injector.exe manual-maps it with no
+// module entry at all), so TH32CS_SNAPMODULE can no longer see it. The DLL's
+// own health channel (Local\MCCombatStatus_<pid>, magic 'MCST' v7) is the
+// reliable "already injected" signal - without this we would LoadLibrary a
+// second copy (second SwapBuffers hook, double UDP) on every app restart.
+static bool HasHealthyShm(DWORD pid)
+{
+    char name[64];
+    sprintf_s(name, "Local\\MCCombatStatus_%lu", pid);
+    HANDLE hMap = OpenFileMappingA(FILE_MAP_READ, FALSE, name);
+    if (!hMap) return false;
+    bool healthy = false;
+    LPVOID view = MapViewOfFile(hMap, FILE_MAP_READ, 0, 0, 0);
+    if (view) {
+        healthy = ShmRead<DWORD>((const BYTE*)view, kShmOffMagic) == kShmMagic &&
+                  ShmRead<DWORD>((const BYTE*)view, kShmOffVersion) == kShmVersion;
+        UnmapViewOfFile(view);
+    }
+    CloseHandle(hMap);
+    return healthy;
+}
+
 void StartInjectorThread()
 {
     std::thread([]() {
@@ -639,7 +666,8 @@ void StartInjectorThread()
                         }
                         continue;
                     }
-                    if (ProcessHasModule(pe.th32ProcessID, L"MCCombatStatusJni.dll")) {
+                    if (ProcessHasModule(pe.th32ProcessID, L"MCCombatStatusJni.dll") ||
+                        HasHealthyShm(pe.th32ProcessID)) {
                         injected.insert(pe.th32ProcessID);   // already loaded
                         if (skipC++ == 0)
                             LogInject("pid %lu (%ls): already loaded, marked",

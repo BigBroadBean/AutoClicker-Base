@@ -53,6 +53,8 @@ Desktop.ini
 
 ## MCCombatStatusJni.dll (project file, tracked)
 !/MCCombatStatusJni.dll
+## V66 手动映射注入器 (随发布分发)
+!/injector.exe
 
 ## 会话规划临时目录
 .zcode/
