@@ -38,6 +38,12 @@
 - **优先镜像节区映射**（SEC_IMAGE + PEB 模块注册）：MEM_IMAGE 内存形态（无匿名可执行内存）、模块枚举与内存类型一致（无隐藏模块特征）；映射后补重定位/导入（LoadLibrary 等价）。首选基址不可用时自动回退手动映射 + 劫持
 - 验证：swapclient 假客户端全链路（ready=1/map=mojang1201/JVM 存活）+ 伪装进程 E2E（劫持注入成功、目标存活、共享内存接通）
 
+### 反检测加固（V70，2026-08-14 深夜，APC 注入）
+
+- **执行方式改为 APC 投递**（`NtQueueApcThread`）：映像映射完成后，把 DLL 内置的自包含加载器投递到游戏各线程的 APC 队列，任意 alertable 线程触发——**不创建新线程、不用 SuspendThread/SetThreadContext、不写额外内存**
+- 加载器（`ApcLoader`）纯自包含：PEB 遍历手工解析 kernel32 → 自修 IAT（幂等，多线程并发安全）→ 执行 DllMain；回退链：节区映射 → 手动映射 → APC → 线程劫持 → 远程线程
+- 验证：swapclient 假客户端 APC 注入成功（日志实锤"APC 执行成功"、ready=1、JVM 存活）；上游 DLL 同版（V70）已发布
+
 ### 文档
 
 - README（中/英）与 DEVELOPMENT.md 同步 V65 架构与网易版真机验证结果

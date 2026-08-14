@@ -906,6 +906,7 @@ static bool HijackRunDll(DWORD pid, ULONGLONG base, ULONGLONG entry, bool verbos
     if (!proc) return false;
     DWORD tid = FindWindowThread(pid);
     if (!tid) { CloseHandle(proc); return false; }
+    if (verbose) LogInject("pid %lu: 劫持目标线程 tid=%lu", pid, tid);
     HANDLE th = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT |
                            THREAD_SET_CONTEXT | THREAD_QUERY_LIMITED_INFORMATION,
                            FALSE, tid);
@@ -939,6 +940,7 @@ static bool HijackRunDll(DWORD pid, ULONGLONG base, ULONGLONG entry, bool verbos
         if (HasHealthyShm(pid)) { done = true; break; }
     }
     if (!done) {
+        if (verbose) LogInject("pid %lu: 劫持等待超时", pid);
         SuspendThread(th);
         SetThreadContext(th, &ctx);
         ResumeThread(th);
@@ -953,6 +955,75 @@ static bool HijackRunDll(DWORD pid, ULONGLONG base, ULONGLONG entry, bool verbos
     CloseHandle(th);
     CloseHandle(proc);
     return true;
+}
+
+// ============================================================
+//  V70: APC 执行 (不创建新线程)。把 DLL 内 ApcLoader 投递到目标全部
+//  线程的 APC 队列, 任意 alertable 线程触发; 加载器自修 IAT 后跑 DllMain
+//  (幂等, 多线程并发触发安全)。ApcLoader 的 RVA 从 COFF 符号表解析。
+// ============================================================
+static DWORD FindSymRva(const BYTE* imgFile, size_t imgSize, const char* target)
+{
+    char alt[64];
+    sprintf_s(alt, "_%s", target);
+    IMAGE_DOS_HEADER* dos = (IMAGE_DOS_HEADER*)imgFile;
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE) return 0;
+    IMAGE_NT_HEADERS64* nt = (IMAGE_NT_HEADERS64*)(imgFile + dos->e_lfanew);
+    DWORD symOff = nt->FileHeader.PointerToSymbolTable;
+    DWORD symNum = nt->FileHeader.NumberOfSymbols;
+    if (!symOff || !symNum) return 0;
+    if (symOff + (size_t)symNum * 18 + 4 > imgSize) return 0;
+    const CoffSym* syms = (const CoffSym*)(imgFile + symOff);
+    const char* strtab = (const char*)(imgFile + symOff + (size_t)symNum * 18);
+    DWORD found = 0;
+    for (DWORD i = 0; i < symNum; i++) {
+        const CoffSym* s = &syms[i];
+        const char* nm = CoffNameOf(s, strtab);
+        if (strcmp(nm, target) == 0 || strcmp(nm, alt) == 0) {
+            if (s->section > 0) {
+                IMAGE_SECTION_HEADER* secs = IMAGE_FIRST_SECTION(nt);
+                int sn = s->section - 1;
+                if (sn < nt->FileHeader.NumberOfSections)
+                    found = s->value + secs[sn].VirtualAddress;   // 节内偏移 + 节区 VA
+            }
+        }
+        i += s->naux;
+    }
+    return found;
+}
+
+typedef LONG(NTAPI* NtQueueApcThread_t)(HANDLE, PVOID, PVOID, PVOID);
+
+static bool ApcRunDll(DWORD pid, ULONGLONG base, DWORD apcRva, bool verbose)
+{
+    auto pNtQueue = (NtQueueApcThread_t)(void*)GetProcAddress(
+        GetModuleHandleA("ntdll.dll"), "NtQueueApcThread");
+    if (!pNtQueue) return false;
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    int queued = 0;
+    if (snap != INVALID_HANDLE_VALUE) {
+        THREADENTRY32 te;
+        te.dwSize = sizeof(te);
+        if (Thread32First(snap, &te)) {
+            do {
+                if (te.th32OwnerProcessID != pid) continue;
+                HANDLE th = OpenThread(THREAD_SET_CONTEXT, FALSE, te.th32ThreadID);
+                if (th) {
+                    pNtQueue(th, (void*)(base + apcRva), (void*)base, nullptr);
+                    CloseHandle(th);
+                    queued++;
+                }
+            } while (Thread32Next(snap, &te));
+        }
+        CloseHandle(snap);
+    }
+    if (!queued) return false;
+    for (int i = 0; i < 100; i++) {
+        Sleep(50);
+        if (HasHealthyShm(pid)) { if (verbose) LogInject("pid %lu: APC 执行成功", pid); return true; }
+    }
+    if (verbose) LogInject("pid %lu: APC 超时 (queued=%d)", pid, queued);
+    return false;
 }
 
 // ============================================================
@@ -994,14 +1065,15 @@ void StartInjectorThread()
             Sleep(1000);
             payload = LoadPayload(&payloadLen);
         }
+        DWORD apcRva = FindSymRva(payload, payloadLen, "ApcLoader");   // V70 APC 加载器 RVA
 
         std::set<DWORD> injected;    // PIDs we have already taken care of
         std::map<DWORD, int> skipLog; // per-PID skip log counter (log once, then throttled)
         std::map<DWORD, int> failLog; // per-PID injection failure counter (backoff + throttle)
 
         HANDLE wake = GateWakeEvent();
-        LogInject("=== injector started, payload=%zu bytes, manual map (idle until feature enabled) ===",
-                  payloadLen);
+        LogInject("=== injector started, payload=%zu bytes, manual map, apcRva=0x%lX (idle until feature enabled) ===",
+                  payloadLen, apcRva);
 
         DWORD backoffMs = 1000;   // 1s -> 2s -> 4s ... capped at 30s on repeated failures
         for (;;) {
@@ -1062,7 +1134,8 @@ void StartInjectorThread()
                     bool injectedOk = ManualMapInject(pe.th32ProcessID, payload, payloadLen,
                                                       verbose, &mBase, &mEntry, false);
                     if (injectedOk) {
-                        injectedOk = HijackRunDll(pe.th32ProcessID, mBase, mEntry, verbose);
+                        if (apcRva) injectedOk = ApcRunDll(pe.th32ProcessID, mBase, apcRva, verbose);
+                        if (!injectedOk) injectedOk = HijackRunDll(pe.th32ProcessID, mBase, mEntry, verbose);
                         if (!injectedOk) {
                             // 映像已就位: 直接远程线程跑入口 (g_attached 幂等防重)
                             BYTE st2[64];
