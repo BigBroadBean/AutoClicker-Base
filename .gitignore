@@ -57,6 +57,7 @@ Desktop.ini
 !/injector.exe
 ## 构建期生成的加密载荷 (tools/enc_dll.ps1 生成)
 AutoClicker/mcstatus_enc.dat
+AutoClicker/glfw_proxy_enc.dat
 
 ## 会话规划临时目录
 .zcode/

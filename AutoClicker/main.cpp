@@ -2290,6 +2290,7 @@ int WINAPI WinMain(HINSTANCE hI, HINSTANCE, LPSTR, int nShow)
     ShowWindow(hwnd, nShow); UpdateWindow(hwnd);
     std::thread(ClickerThreadProc).detach();
     StartMultiClickHook();
+    StartProxyInstall();        // V70.1: 自动安装 glfw 代理 (游戏自行加载, 零注入)
     StartCanAttackMonitor();
     StartCanAttackShmPoller();
     StartInjectorThread();

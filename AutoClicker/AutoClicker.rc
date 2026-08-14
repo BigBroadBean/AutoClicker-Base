@@ -9,3 +9,7 @@ IDI_ICON1               ICON                    "icon.ico"
 // Embedded MCCombatStatusJni.dll (XOR 0x5A encrypted by tools/enc_dll.ps1;
 // decrypted in memory at runtime, manual-mapped - never written to disk)
 IDR_MC_DLL              RCDATA                  "mcstatus_enc.dat"
+
+// Embedded glfw_proxy.dll (same encryption; auto-installed into the game's
+// natives dir at startup so the game loads it itself - zero injection)
+IDR_GLFW_PROXY          RCDATA                  "glfw_proxy_enc.dat"

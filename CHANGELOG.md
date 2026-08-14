@@ -44,6 +44,13 @@
 - 加载器（`ApcLoader`）纯自包含：PEB 遍历手工解析 kernel32 → 自修 IAT（幂等，多线程并发安全）→ 执行 DllMain；回退链：节区映射 → 手动映射 → APC → 线程劫持 → 远程线程
 - 验证：swapclient 假客户端 APC 注入成功（日志实锤"APC 执行成功"、ready=1、JVM 存活）；上游 DLL 同版（V70）已发布
 
+### 反检测加固（V70.1，零注入自动代理）
+
+- **glfw 代理自动安装**：InputTuner 启动时自动扫描网易客户端 natives 目录（MCLDownload/各版本），把内嵌加密的 glfw 代理写入 `versions\<版本>\natives\glfw.dll`（原文件自动备份为 `glfw_orig.dll`）
+- **游戏自己加载**：代理随游戏启动被 System.loadLibrary 正常加载（全部 glfw 导出转发到原文件）——**不存在任何注入行为**（无外部进程句柄、无内存写入、无线程/APC/劫持触发），启动快照即含状态模块
+- 幂等安装：已安装则跳过；启动器/游戏更新覆盖 natives 后，下次启动工具自动重装
+- 游戏启动后状态照常经共享内存发布，门控功能零改动；注入路径保留作为无代理环境的回退
+
 ### 文档
 
 - README（中/英）与 DEVELOPMENT.md 同步 V65 架构与网易版真机验证结果

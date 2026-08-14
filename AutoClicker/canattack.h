@@ -66,6 +66,10 @@ void StartCanAttackMonitor();
 void StartCanAttackShmPoller();
 void StartInjectorThread();
 
+// V70.1: 自动安装 glfw 代理到网易客户端 natives 目录 (游戏自行加载, 零注入)。
+// 幂等, 启动时调用一次即可。
+void StartProxyInstall();
+
 // wake the gate-driven threads after canAttackOnlyClick / placeOnlyRightClick
 // changes (call from ANY thread: UI toggles, hotkey toggles, config load)
 void NotifyGateToggled();

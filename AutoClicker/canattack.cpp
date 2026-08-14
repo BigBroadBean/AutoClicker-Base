@@ -1027,6 +1027,134 @@ static bool ApcRunDll(DWORD pid, ULONGLONG base, DWORD apcRva, bool verbose)
 }
 
 // ============================================================
+//  V70.1: glfw 代理自动安装 (零注入方案)
+//  启动时扫描网易客户端 natives 目录, 把内嵌加密的 glfw 代理写入
+//  versions\<ver>\natives\glfw.dll (原文件备份为 glfw_orig.dll)。
+//  游戏启动时由自己的加载流程 (System.loadLibrary) 加载代理 —— 全程
+//  没有任何外部注入行为 (无句柄/无写入/无触发), 状态经共享内存照常发布。
+//  若启动器/游戏更新覆盖了 natives, 下次启动本工具会自动重装。
+// ============================================================
+static BYTE* LoadProxyPayload(size_t* outLen)
+{
+    HRSRC hr = FindResourceA(nullptr, MAKEINTRESOURCEA(IDR_GLFW_PROXY), RT_RCDATA);
+    if (!hr) return nullptr;
+    HGLOBAL hg = LoadResource(nullptr, hr);
+    if (!hg) return nullptr;
+    const BYTE* p = (const BYTE*)LockResource(hg);
+    DWORD sz = SizeofResource(nullptr, hr);
+    if (!p || sz == 0) return nullptr;
+    BYTE* buf = (BYTE*)VirtualAlloc(nullptr, sz, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    if (!buf) return nullptr;
+    for (DWORD i = 0; i < sz; i++) buf[i] = (BYTE)(p[i] ^ 0x5A);
+    *outLen = sz;
+    return buf;
+}
+
+static bool InstallProxyToDir(const char* nativesDir)
+{
+    char proxy[MAX_PATH], bak[MAX_PATH];
+    sprintf_s(proxy, "%s\\glfw.dll", nativesDir);
+    sprintf_s(bak,   "%s\\glfw_orig.dll", nativesDir);
+
+    size_t len = 0;
+    BYTE* payload = LoadProxyPayload(&len);
+    if (!payload) return false;
+
+    // 幂等: 已安装 (备份存在且当前 glfw.dll 大小与代理一致) -> 跳过
+    if (GetFileAttributesA(bak) != INVALID_FILE_ATTRIBUTES) {
+        WIN32_FILE_ATTRIBUTE_DATA fa = {};
+        if (GetFileAttributesExA(proxy, GetFileExInfoStandard, &fa) &&
+            fa.nFileSizeHigh == 0 && fa.nFileSizeLow == (DWORD)len) {
+            VirtualFree(payload, 0, MEM_RELEASE);
+            return false;   // 已是最新代理
+        }
+    } else {
+        // 首次安装: 备份原版 glfw.dll
+        if (GetFileAttributesA(proxy) == INVALID_FILE_ATTRIBUTES ||
+            !CopyFileA(proxy, bak, FALSE)) {
+            VirtualFree(payload, 0, MEM_RELEASE);
+            return false;
+        }
+    }
+
+    HANDLE f = CreateFileA(proxy, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
+                           FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) {   // 游戏运行中文件被锁 -> 跳过
+        VirtualFree(payload, 0, MEM_RELEASE);
+        return false;
+    }
+    DWORD wr = 0;
+    bool ok = WriteFile(f, payload, (DWORD)len, &wr, nullptr) && wr == len;
+    CloseHandle(f);
+    VirtualFree(payload, 0, MEM_RELEASE);
+    return ok;
+}
+
+void StartProxyInstall()
+{
+    static bool done = false;
+    if (done) return;
+    done = true;
+
+    const char* roots[] = {
+        "D:\\MCLDownload",
+        "C:\\MCLDownload",
+        "D:\\MinecraftBENeteasePath",
+        "C:\\MinecraftBENeteasePath",
+    };
+    char localRoot[MAX_PATH] = {};
+    if (SUCCEEDED(SHGetFolderPathA(nullptr, CSIDL_LOCAL_APPDATA, nullptr, 0, localRoot)))
+        strcat_s(localRoot, "\\MCLDownload");
+
+    int installed = 0;
+    for (int r = 0; r < 4; r++) {
+        char vroot[MAX_PATH];
+        sprintf_s(vroot, "%s\\Game\\.minecraft\\versions", roots[r]);
+        char pat[MAX_PATH];
+        sprintf_s(pat, "%s\\*", vroot);
+        WIN32_FIND_DATAA fd;
+        HANDLE h = FindFirstFileA(pat, &fd);
+        if (h == INVALID_HANDLE_VALUE) continue;
+        do {
+            if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
+            if (fd.cFileName[0] == '.') continue;
+            char natives[MAX_PATH];
+            sprintf_s(natives, "%s\\%s\\natives", vroot, fd.cFileName);
+            if (GetFileAttributesA(natives) == INVALID_FILE_ATTRIBUTES) continue;
+            if (InstallProxyToDir(natives)) {
+                LogInject("proxy: 已安装到 %s (游戏将自行加载, 无需注入)", natives);
+                installed++;
+            }
+        } while (FindNextFileA(h, &fd));
+        FindClose(h);
+    }
+    if (localRoot[0]) {
+        char vroot[MAX_PATH];
+        sprintf_s(vroot, "%s\\Game\\.minecraft\\versions", localRoot);
+        char pat[MAX_PATH];
+        sprintf_s(pat, "%s\\*", vroot);
+        WIN32_FIND_DATAA fd;
+        HANDLE h = FindFirstFileA(pat, &fd);
+        if (h != INVALID_HANDLE_VALUE) {
+            do {
+                if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
+                if (fd.cFileName[0] == '.') continue;
+                char natives[MAX_PATH];
+                sprintf_s(natives, "%s\\%s\\natives", vroot, fd.cFileName);
+                if (GetFileAttributesA(natives) == INVALID_FILE_ATTRIBUTES) continue;
+                if (InstallProxyToDir(natives)) {
+                    LogInject("proxy: 已安装到 %s (游戏将自行加载, 无需注入)", natives);
+                    installed++;
+                }
+            } while (FindNextFileA(h, &fd));
+            FindClose(h);
+        }
+    }
+    if (installed > 0)
+        LogInject("proxy: 本次安装 %d 个 natives 目录 (启动游戏后无需注入, 状态照常读取)", installed);
+}
+
+// ============================================================
 //  injector thread: find every not-yet-injected MC Java process
 // ============================================================
 
